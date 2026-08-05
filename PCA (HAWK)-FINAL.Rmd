@@ -1,0 +1,1438 @@
+---
+title: "PCA (HAWK)-05.08.2026"
+author: "Angelina"
+date: "2026-02-16"
+output: html_document
+---
+
+## Data
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load-packages, include=FALSE}
+if (!require("pacman", quietly = TRUE)) install.packages("pacman")
+pacman::p_load(
+  dplyr, tidyr, ggplot2, ggforce, stringr, forcats, purrr,
+  janitor, skimr, gtsummary, writexl, vcd, reshape2
+)
+```
+
+```{r}
+HAWK <- read.csv("O:/Korean Health/Data/Codebook/Recoding/Data/DATA_ALL (5.20.2025).csv") %>%
+  filter(!(ELIGIBLE_COMPLETE!=1))
+dim(HAWK)
+df <- HAWK
+```
+```{r}
+table(df$G5, useNA = "ifany")
+```
+
+## Variable choice
+```{r}
+var_list <- c(
+  # grouping
+  "WAVE", "SEED",
+
+  # Sociodemographic
+  "AGE",
+  "B1_MALE",
+  "B4", # education level
+  "N1", # employment status
+  "B2", # marital status
+  "N3", # income
+
+  # Immigration
+  "HOMELANG",
+  "SC5_EN",
+  "SC5_KR",
+  "G5", # citizenship/green card related
+  "G2", # year move to US
+  "G3", # ethnic identity
+  "G1", # country of birth
+  "H6", # politics interest
+
+  # Health
+  "BMI_CAT", # BMI category
+  "ANY_DIFFICULTY", # any difficulty (yes/no)
+  "C1_0", "C1_1",
+  "E5_1_1", "E5_1_2", "E5_EX_1","E5_EX_2", # life satisfaction item
+  "K6_CAT", # psychological distress category
+  "LONELINESS_CAT", # loneliness yes/no
+  "INSCOV", "M2", # times seeing a medical doctor (continuous)
+
+  # Social network
+  "P1_KOREAN", # number of Korean adults known
+  "NUM_CLOSE_KR",  # number of Korean people feel close to
+  "NUM_CLOSE",
+  "H4_ANSWERED" # org membership answered indicator
+)
+
+var_list_exist <- var_list[var_list %in% names(df)]
+missing_cols <- setdiff(var_list, var_list_exist)
+if(length(missing_cols) > 0){
+  message("These variables are not found in df: ", paste(missing_cols, collapse = ", "))
+}
+
+survey_year <- 2023
+
+dat <- df %>%
+  dplyr::select(all_of(var_list_exist)) %>%
+  dplyr::mutate(
+    # cap P1_KOREAN at 100
+    P1_KOREAN = if ("P1_KOREAN" %in% names(.)) pmin(P1_KOREAN, 100) else P1_KOREAN,
+
+    # years in US (structural skip for G2)
+    years_in_us = case_when(
+      "G1" %in% names(.) & G1 == 1 ~ AGE,
+      "G1" %in% names(.) & "G2" %in% names(.) & G1 != 1 & !is.na(G2) ~ survey_year - G2,
+      TRUE ~ NA_real_
+    ),
+
+    # doctor visits eligibility (structural skip via INSCOV)
+    doctor_visits = case_when(
+      "INSCOV" %in% names(.) & INSCOV == 1 ~ M2,
+      "INSCOV" %in% names(.) & INSCOV == 0 ~ 0,
+      TRUE ~ NA_real_
+    ),
+    doctor_eligible = case_when(
+      "INSCOV" %in% names(.) & INSCOV == 1 ~ 1,
+      "INSCOV" %in% names(.) & INSCOV == 0 ~ 0,
+      TRUE ~ NA_real_
+    )
+  )
+
+# (A) Self-rated health combine
+if (all(c("C1_0","C1_1") %in% names(dat))) {
+  dat <- dat %>%
+    mutate(
+      C1_0_4 = case_when(
+        C1_0 %in% c(1,2) ~ 1,
+        C1_0 == 3 ~ 2,
+        C1_0 == 4 ~ 3,
+        C1_0 == 5 ~ 4,
+        TRUE ~ NA_real_
+      ),
+      C1_1_4 = case_when(
+        C1_1 %in% 1:4 ~ as.numeric(C1_1),
+        TRUE ~ NA_real_
+      ),
+      self_rated_health_4 = coalesce(C1_0_4, C1_1_4),
+      self_rated_health_4_f = factor(
+        self_rated_health_4,
+        levels = 1:4,
+        labels = c("Excellent/Very good", "Good", "Fair / Neither", "Poor / Bad")
+      )
+    )
+}
+
+# (B) Life satisfaction composite
+have_e5 <- all(c("E5_1_1","E5_1_2","E5_EX_1","E5_EX_2") %in% names(dat))
+if (have_e5) {
+  dat <- dat %>%
+    mutate(
+      E5_1_1_01  = (E5_1_1  - 1) / 4,
+      E5_EX_1_01 = (E5_EX_1 - 1) / 4,
+      E5_1_2_01  = (E5_1_2  - 1) / 5,
+      E5_EX_2_01 = (E5_EX_2 - 1) / 5
+    ) %>%
+    rowwise() %>%
+    mutate(
+      life_satisfaction_01 = mean(
+        c_across(c(E5_1_1_01, E5_1_2_01, E5_EX_1_01, E5_EX_2_01)),
+        na.rm = TRUE
+      )
+    ) %>%
+    ungroup() %>%
+    mutate(
+      life_satisfaction_01 = if_else(is.nan(life_satisfaction_01), NA_real_, life_satisfaction_01),
+      life_satisfaction_100 = 100 * life_satisfaction_01
+    )
+}
+
+# (C) Citizenship combine
+if (all(c("G1", "G5") %in% names(dat))) {
+  dat <- dat %>%
+    mutate(
+      us_citizen_combined = case_when(
+        G1 == 1 ~ 1,
+        G1 != 1 & G5 == 1 ~ 1,
+        G1 != 1 & G5 %in% c(2, 3) ~ 0,
+        TRUE ~ NA_real_
+      ),
+      us_citizen_combined_f = factor(
+        us_citizen_combined,
+        levels = c(0, 1),
+        labels = c("Not a US citizen", "US citizen")
+      )
+    )
+}
+
+# (D) Ethnic identity gate: G3 asked only if G1 != 1 (non-US born)
+if (all(c("G1","G3") %in% names(dat))) {
+
+  dat <- dat %>%
+    mutate(
+      g3_eligible = case_when(
+        G1 == 1 ~ 0, # US-born -> not asked G3 by design
+        G1 != 1 ~ 1, # non-US born -> eligible
+        TRUE ~ NA_real_
+      ),
+
+      korean_identity = case_when(
+        G1 == 1 ~ 0,
+        G1 != 1 & G3 == 2 ~ 1, # Korean
+        G1 != 1 & G3 %in% c(1,3,4) ~ 0, # non-Korean categories
+        TRUE ~ NA_real_
+      ),
+
+      korean_identity_f = factor(
+        korean_identity,
+        levels = c(0,1),
+        labels = c("Non-Korean identity","Korean")
+      )
+    )
+}
+
+# drop raw items you no longer want to show
+dat <- dat %>%
+  select(
+    -any_of(c(
+      "C1_0","C1_1","C1_0_4","C1_1_4",
+      "E5_1_1","E5_1_2","E5_EX_1","E5_EX_2",
+      "E5_1_1_01","E5_1_2_01","E5_EX_1_01","E5_EX_2_01",
+      "life_satisfaction_01",
+      "G5","G2","INSCOV","M2","G3"
+    ))
+  )
+
+## cut points
+income_cut <- 30000
+years_us_cut <- 13 # survey year (2023) - 2010
+life_sat_med <- median(dat$life_satisfaction_100, na.rm = TRUE)
+
+dat_bin <- dat %>%
+  dplyr::mutate(
+    seed01 = dplyr::case_when(
+      SEED == 1 ~ 1,
+      SEED == 0 ~ 0,
+      TRUE ~ NA_real_
+    ),
+    seed_group = factor(seed01, levels = c(0, 1), labels = c("Non-seed", "Seed")),
+
+    ## sociodemographic
+    age_ge35 = dplyr::case_when(
+      AGE >= 35 ~ 1,
+      !is.na(AGE) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    male = dplyr::case_when(
+      B1_MALE == 0 ~ 1,
+      B1_MALE == 1 ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    somecollege_plus = dplyr::case_when(
+      B4 >= 4 ~ 1,
+      !is.na(B4) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    employed = dplyr::case_when(
+      N1 %in% c(1, 2) ~ 1,
+      !is.na(N1) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    married_partnered = dplyr::case_when(
+      B2 %in% c(1, 2) ~ 1,
+      !is.na(B2) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    income_ge30000 = dplyr::case_when(
+      N3 >= income_cut ~ 1,
+      !is.na(N3) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    ## immigration / language
+    home_lang_korean = dplyr::case_when(
+      HOMELANG == 2 ~ 1,
+      !is.na(HOMELANG) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    english_proficient = dplyr::case_when(
+      SC5_EN >= 4 ~ 1,
+      !is.na(SC5_EN) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    korean_proficient = dplyr::case_when(
+      SC5_KR >= 4 ~ 1,
+      !is.na(SC5_KR) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    us_citizen = dplyr::case_when(
+      us_citizen_combined == 1 ~ 1,
+      us_citizen_combined == 0 ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    years_us_recent = dplyr::case_when(
+      years_in_us >= years_us_cut ~ 1,
+      !is.na(years_in_us) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    korean_identity = dplyr::case_when(
+      korean_identity == 1 ~ 1,
+      korean_identity == 0 ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    us_born = dplyr::case_when(
+      G1 == 1 ~ 1,
+      !is.na(G1) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    interestin_Korean_politics = dplyr::case_when(
+      H6 %in% c(2, 3) ~ 1,
+      H6 %in% c(1, 4) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    ## health
+    overweight_obese = dplyr::case_when(
+      BMI_CAT %in% c(3, 4) ~ 1,
+      BMI_CAT %in% c(1, 2) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    any_difficulty = dplyr::case_when(
+      ANY_DIFFICULTY == 1 ~ 1,
+      ANY_DIFFICULTY == 0 ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    srh_fairpoor = dplyr::case_when(
+      self_rated_health_4 %in% c(3, 4) ~ 1,
+      self_rated_health_4 %in% c(1, 2) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    life_satisfaction_low = dplyr::case_when(
+      life_satisfaction_100 < life_sat_med ~ 1,
+      !is.na(life_satisfaction_100) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    distress_high = dplyr::case_when(
+      K6_CAT >= 2 ~ 1,
+      !is.na(K6_CAT) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    lonely = dplyr::case_when(
+      LONELINESS_CAT == 1 ~ 1,
+      LONELINESS_CAT == 0 ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    doctor_visit_any = dplyr::case_when(
+      doctor_visits > 0 ~ 1,
+      !is.na(doctor_visits) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    ## social network
+    korean_known_gt10 = dplyr::case_when(
+      P1_KOREAN > 10 ~ 1,
+      !is.na(P1_KOREAN) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    close_korean_any = dplyr::case_when(
+      NUM_CLOSE_KR > 0 ~ 1,
+      !is.na(NUM_CLOSE_KR) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    close_people_any = dplyr::case_when(
+      NUM_CLOSE > 0 ~ 1,
+      !is.na(NUM_CLOSE) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    org_membership_answered = dplyr::case_when(
+      H4_ANSWERED == 1 ~ 1,
+      H4_ANSWERED == 0 ~ 0,
+      TRUE ~ NA_real_
+    )
+  )
+```
+
+## correlation test
+```{r}
+# Sociodemographic
+cor(dat_bin[, c("somecollege_plus", "income_ge30000", "employed")], use = "pairwise.complete.obs")
+
+# immigration
+cor(dat_bin[, c("home_lang_korean", "english_proficient", "korean_proficient", "us_citizen", "years_us_recent", "korean_identity", "interestin_Korean_politics")], use = "pairwise.complete.obs")
+
+# Physical Health
+cor(dat_bin[, c("overweight_obese", "srh_fairpoor")], use = "pairwise.complete.obs")
+
+# Mental Health
+cor(dat_bin[, c("any_difficulty", "life_satisfaction_low", "distress_high", "lonely")], use = "pairwise.complete.obs")
+
+# Social Network
+cor(dat_bin[, c("korean_known_gt10", "close_korean_any", "close_people_any", "org_membership_answered")], use = "pairwise.complete.obs")
+dat_bin %>% count(org_membership_answered)
+cor(dat_bin[, c("korean_known_gt10", "close_korean_any", "close_people_any")], use = "pairwise.complete.obs")
+```
+
+## Missingness
+```{r}
+dat_miss_bin <- dat_bin %>%
+  dplyr::select(
+    seed01, seed_group,
+    
+    # Sociodemograpgic
+    age_ge35,
+    male,
+    employed,
+    married_partnered,
+    income_ge30000,
+
+    # Immigrant
+    english_proficient,
+    years_us_recent,
+    korean_identity,
+    interestin_Korean_politics,
+    
+    # Physical Health
+    overweight_obese,
+    any_difficulty,
+    srh_fairpoor,
+    doctor_visit_any,
+    
+    # Mental Health
+    life_satisfaction_low,
+    distress_high,
+    lonely,
+
+    # Social Network
+    korean_known_gt10,
+    close_korean_any,
+  )
+
+var_labels_bin <- c(
+  # Sociodemographic
+  age_ge35 = "age >= 35",
+  male = "male",
+  employed = "currently employed",
+  married_partnered = "married or living with partner",
+  income_ge30000 = "income >= 30000",
+
+  # Immigrant
+  english_proficient = "English proficiency: well or very well",
+  years_us_recent = "years in US >= 13",
+  korean_identity = "Korean identity",
+  us_born = "born in US",
+  interestin_Korean_politics = "more or equal interest in Korean politics",
+
+  # Health
+  overweight_obese = "BMI >= 25 (overweight or obese)",
+  any_difficulty = "any difficulty in functioning",
+  srh_fairpoor = "self-rated health fair/poor",
+  life_satisfaction_low = "below median life satisfaction",
+  distress_high = "moderate or serious psychological distress",
+  lonely = "loneliness = yes",
+  doctor_visit_any = "visited doctor at least once",
+
+  # Social network
+  korean_known_gt10 = "know > 10 Korean adults",
+  close_korean_any = "close Korean contacts > 0"
+)
+```
+
+## Plot
+```{r}
+analysis_vars_bin <- setdiff(names(dat_miss_bin), c("seed01", "seed_group"))
+
+missing_overall_bin <- dat_miss_bin %>%
+  dplyr::summarise(across(all_of(analysis_vars_bin), ~mean(is.na(.)) * 100)) %>%
+  tidyr::pivot_longer(everything(), names_to = "variable", values_to = "pct_missing") %>%
+  dplyr::mutate(variable_label = dplyr::recode(variable, !!!var_labels_bin)) %>%
+  dplyr::arrange(desc(pct_missing))
+
+missing_overall_bin
+
+ggplot(missing_overall_bin,
+       aes(x = reorder(variable_label, pct_missing), y = pct_missing)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    x = NULL,
+    y = "% Missing",
+    title = "Missingness by binary variables (overall)"
+  ) +
+  theme_minimal()
+```
+
+## Table (for imputation understanding)
+```{r}
+missing_table_bin <- missing_overall_bin %>%
+  dplyr::select(variable, variable_label, pct_missing) %>%
+  dplyr::mutate(
+    pct_missing = round(pct_missing, 2)
+  ) %>%
+  dplyr::arrange(desc(pct_missing))
+
+missing_table_bin
+```
+
+# PCA with imputation
+## PCA variable
+```{r}
+## seed01 could be predictor due to it don't have missing value, but not putting in PCA main analysis
+pca_vars <- setdiff(names(dat_miss_bin), c("WAVE", "seed01", "seed_group"))
+imp_vars <- setdiff(names(dat_miss_bin), c("WAVE", "seed_group"))
+
+## missing rate
+miss_rate <- sapply(dat_miss_bin[imp_vars], function(x) mean(is.na(x)) * 100)
+
+miss_df <- data.frame(
+  variable = names(miss_rate),
+  pct_missing = as.numeric(miss_rate)
+) %>%
+  arrange(pct_missing)
+
+miss_df
+```
+
+## Hot deck
+```{r}
+## one-variable hot deck imputation
+hotdeck_one_var <- function(data, target, predictors, k = 5, seed = 123) {
+  set.seed(seed)
+
+  x <- data
+
+  miss_idx <- which(is.na(x[[target]]))
+  obs_idx  <- which(!is.na(x[[target]]))
+
+  if (length(miss_idx) == 0) return(x)
+
+  if (length(predictors) == 0) {
+    x[[target]][miss_idx] <- sample(x[[target]][obs_idx],
+                                    size = length(miss_idx),
+                                    replace = TRUE)
+    return(x)
+  }
+
+  donor_mat <- as.matrix(x[obs_idx, predictors, drop = FALSE])
+  recip_mat <- as.matrix(x[miss_idx, predictors, drop = FALSE])
+
+  ## numeric
+  donor_mat <- apply(donor_mat, 2, as.numeric)
+  recip_mat <- apply(recip_mat, 2, as.numeric)
+
+  ## If there is only one predictor, put in matrix
+  if (is.null(dim(donor_mat))) donor_mat <- matrix(donor_mat, ncol = 1)
+  if (is.null(dim(recip_mat))) recip_mat <- matrix(recip_mat, ncol = 1)
+
+  donor_y <- x[[target]][obs_idx]
+
+  imputed_values <- sapply(seq_len(nrow(recip_mat)), function(i) {
+    d <- rowSums((t(t(donor_mat) - recip_mat[i, ]))^2)
+
+    ## closest donor k
+    k_use <- min(k, length(d))
+    nearest_idx <- order(d)[1:k_use]
+
+    sample(donor_y[nearest_idx], size = 1)
+  })
+
+  x[[target]][miss_idx] <- imputed_values
+  x
+}
+```
+
+## sequential hot deck from lowest missing rate
+```{r}
+dat_imp_seq <- dat_miss_bin
+
+## let 0% missing be in the predictor pool
+predictor_pool <- miss_df %>%
+  filter(pct_missing == 0) %>%
+  pull(variable)
+
+## variables for sequentially impute
+target_order <- miss_df %>%
+  filter(pct_missing > 0) %>%
+  arrange(pct_missing) %>%
+  pull(variable)
+
+predictor_pool
+target_order
+```
+```{r}
+## sequential hot deck
+imputation_log <- data.frame(
+  step = integer(),
+  target = character(),
+  pct_missing = numeric(),
+  n_predictors_used = integer(),
+  predictors_used = character()
+)
+
+for (j in seq_along(target_order)) {
+  target_j <- target_order[j]
+
+  ## predictors couldn't include themselves
+  current_predictors <- setdiff(predictor_pool, target_j)
+
+  dat_imp_seq <- hotdeck_one_var(
+    data = dat_imp_seq,
+    target = target_j,
+    predictors = current_predictors,
+    k = 5,
+    seed = 100 + j
+  )
+
+  ## adding target_j in the predictor pool after imputing
+  predictor_pool <- c(predictor_pool, target_j)
+
+  imputation_log <- bind_rows(
+    imputation_log,
+    data.frame(
+      step = j,
+      target = target_j,
+      pct_missing = miss_df$pct_missing[match(target_j, miss_df$variable)],
+      n_predictors_used = length(current_predictors),
+      predictors_used = paste(current_predictors, collapse = ", ")
+    )
+  )
+}
+
+imputation_log
+```
+
+## Check
+```{r}
+colSums(is.na(dat_imp_seq))
+sum(is.na(dat_imp_seq[pca_vars]))
+```
+## PCA
+```{r}
+## imputed data for PCA
+dat_pca_imp <- dat_imp_seq %>%
+  dplyr::select(all_of(pca_vars))
+
+dim(dat_pca_imp)
+
+pca_imp <- prcomp(dat_pca_imp, center = TRUE, scale. = TRUE)
+
+summary(pca_imp)
+```
+
+# PCA with imputation
+```{r}
+round(pca_imp$rotation,2)
+```
+
+```{r}
+rot <- round(pca_imp$rotation, 2)[, 1:7]
+
+lapply(colnames(rot), function(pc) {
+  rot[abs(rot[, pc]) > 0.3, pc, drop = FALSE]
+})
+```
+
+## PC distribution (histogram)
+```{r}
+# PC scores (each row = individual, each column = PC)
+pc_scores_imp <- as.data.frame(pca_imp$x)
+
+pc_scores_imp$id <- 1:nrow(pc_scores_imp)
+
+dim(pc_scores_imp)
+
+# turn into long format
+library(tidyr)
+
+pc_long <- pc_scores_imp %>%
+  pivot_longer(
+    cols = starts_with("PC"),
+    names_to = "PC",
+    values_to = "score"
+  )
+
+# histogram
+ggplot(pc_long %>% filter(PC %in% paste0("PC", 1:9)),
+       aes(x = score)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~PC, scales = "free") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of First 9 Principal Components (Imputed Data)",
+    x = "PC score",
+    y = "Count"
+  )
+
+ggplot(pc_long %>% filter(PC %in% paste0("PC", 10:18)),
+       aes(x = score)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~PC, scales = "free") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of 10-19 Principal Components (Imputed Data)",
+    x = "PC score",
+    y = "Count"
+  )
+```
+
+## Plot by wave
+from  mean variables by wave -> PCA to PCA on individuals -> mean PC scores by wave
+```{r, fig.width=8, fig.height=4.5}
+# estimated PC scores from each respondent
+pc_scores_ind <- as.data.frame(pca_imp$x[, 1:7])
+
+# connect with wave
+pc_scores_ind$Wave <- dat_bin$WAVE
+
+# mean PC score by wave
+wave_pc_mean <- pc_scores_ind %>%
+  group_by(Wave) %>%
+  summarise(
+    across(starts_with("PC"), mean, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# explained variance by individual PCA
+var_exp <- summary(pca_imp)$importance[2, ] * 100
+
+plot_df <- wave_pc_mean %>%
+  pivot_longer(
+    cols = c(PC2, PC3, PC4, PC5, PC6, PC7),
+    names_to = "PC_y",
+    values_to = "y_value"
+  ) %>%
+  mutate(
+    x_value = PC1,
+    panel = dplyr::case_when(
+      PC_y == "PC2" ~ paste0("PC1 (", round(var_exp[1], 1), "%) vs PC2 (", round(var_exp[2], 1), "%)"),
+      PC_y == "PC3" ~ paste0("PC1 (", round(var_exp[1], 1), "%) vs PC3 (", round(var_exp[3], 1), "%)"),
+      PC_y == "PC4" ~ paste0("PC1 (", round(var_exp[1], 1), "%) vs PC4 (", round(var_exp[4], 1), "%)"),
+      PC_y == "PC5" ~ paste0("PC1 (", round(var_exp[1], 1), "%) vs PC5 (", round(var_exp[5], 1), "%)"),
+      PC_y == "PC6" ~ paste0("PC1 (", round(var_exp[1], 1), "%) vs PC6 (", round(var_exp[6], 1), "%)"),
+      PC_y == "PC7" ~ paste0("PC1 (", round(var_exp[1], 1), "%) vs PC7 (", round(var_exp[7], 1), "%)")
+    )
+  )
+
+# zero in the  middle
+x_lim <- max(abs(plot_df$x_value), na.rm = TRUE)
+y_lim <- max(abs(plot_df$y_value), na.rm = TRUE)
+
+wave_breaks <- seq(min(plot_df$Wave), max(plot_df$Wave), by = 2)
+
+ggplot(plot_df, aes(
+  x = x_value,
+  y = y_value,
+  color = as.numeric(Wave),
+  alpha = as.numeric(Wave)
+)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_point(size = 4) +
+  facet_wrap(~panel, ncol = 3) +
+  scale_color_gradientn(
+    colours = c("#8B0000", "#FFC0CB"),
+    breaks = wave_breaks,
+    labels = wave_breaks,
+    name = "Wave"
+  ) +
+  scale_alpha(range = c(1, 0.4), guide = "none") +
+  coord_cartesian(
+    xlim = c(-x_lim, x_lim),
+    ylim = c(-y_lim, y_lim)
+  ) +
+  labs(
+    x = paste0("Mean PC1 score (", round(var_exp[1], 1), "%)"),
+    y = "Mean PC score",
+    title = "Wave-level Mean PCA Scores (Darker = earlier waves)"
+  ) +
+  theme_minimal()
+```
+```{r}
+plot_df <- plot_df %>%
+  mutate(
+    x_label = paste0("PC1 (", round(var_exp[1], 1), "%)"),
+    y_label = case_when(
+      PC_y == "PC2" ~ paste0("PC2 (", round(var_exp[2], 1), "%)"),
+      PC_y == "PC3" ~ paste0("PC3 (", round(var_exp[3], 1), "%)"),
+      PC_y == "PC4" ~ paste0("PC4 (", round(var_exp[4], 1), "%)"),
+      PC_y == "PC5" ~ paste0("PC5 (", round(var_exp[5], 1), "%)"),
+      PC_y == "PC6" ~ paste0("PC6 (", round(var_exp[6], 1), "%)"),
+      PC_y == "PC7" ~ paste0("PC7 (", round(var_exp[7], 1), "%)")
+    )
+  )
+
+ggplot(plot_df, aes(
+  x = x_value,
+  y = y_value,
+  color = as.numeric(Wave),
+  alpha = as.numeric(Wave)
+)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey60") +
+
+  geom_point(size = 4) +
+  
+  geom_text(
+    data = plot_df %>% distinct(panel, x_label),
+    aes(x = 0, y = -1.8, label = x_label),
+    inherit.aes = FALSE,
+    size = 3.5
+  ) +
+
+  geom_text(
+    data = plot_df %>% distinct(panel, y_label),
+    aes(x = -1.8, y = 0, label = y_label),
+    inherit.aes = FALSE,
+    angle = 90,
+    size = 3.5
+  ) +
+
+  facet_wrap(~panel, ncol = 3) +
+
+  scale_color_gradientn(
+    colours = c("#8B0000", "#FFC0CB"),
+    breaks = wave_breaks,
+    labels = wave_breaks,
+    name = "Wave"
+  ) +
+
+  scale_alpha(range = c(1, 0.4), guide = "none") +
+
+  coord_cartesian(
+    xlim = c(-2, 2),
+    ylim = c(-2, 2)
+  ) +
+
+  labs(
+    title = "Wave-level Mean PCA Scores (Darker = earlier waves)"
+  ) +
+
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),
+    strip.text = element_blank()
+  )
+```
+```{r, fig.width=8, fig.height=4.5}
+# estimated PC scores from each respondent
+pc_scores_ind <- as.data.frame(pca_imp$x[, 1:7])
+
+# connect with wave
+pc_scores_ind$Wave <- dat_bin$WAVE
+
+# mean PC score + wave size by wave
+wave_pc_mean <- pc_scores_ind %>%
+  filter(!is.na(Wave)) %>%
+  group_by(Wave) %>%
+  summarise(
+    wave_size = n(),
+    across(starts_with("PC"), mean, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# explained variance by individual PCA
+var_exp <- summary(pca_imp)$importance[2, ] * 100
+
+plot_df <- wave_pc_mean %>%
+  pivot_longer(
+    cols = c(PC2, PC3, PC4, PC5, PC6, PC7),
+    names_to = "PC_y",
+    values_to = "y_value"
+  ) %>%
+  mutate(
+    x_value = PC1,
+    Wave_num = as.numeric(Wave),
+    x_label = paste0("PC1 (", round(var_exp[1], 1), "%)"),
+    y_label = case_when(
+      PC_y == "PC2" ~ paste0("PC2 (", round(var_exp[2], 1), "%)"),
+      PC_y == "PC3" ~ paste0("PC3 (", round(var_exp[3], 1), "%)"),
+      PC_y == "PC4" ~ paste0("PC4 (", round(var_exp[4], 1), "%)"),
+      PC_y == "PC5" ~ paste0("PC5 (", round(var_exp[5], 1), "%)"),
+      PC_y == "PC6" ~ paste0("PC6 (", round(var_exp[6], 1), "%)"),
+      PC_y == "PC7" ~ paste0("PC7 (", round(var_exp[7], 1), "%)")
+    ),
+    panel = paste0(x_label, " vs ", y_label)
+  )
+
+# weighted average point for each subplot
+avg_df <- plot_df %>%
+  group_by(panel) %>%
+  summarise(
+    x_avg = weighted.mean(x_value, wave_size, na.rm = TRUE),
+    y_avg = weighted.mean(y_value, wave_size, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+wave_breaks <- c(0, 5, 10, 15)
+
+p1 <- ggplot(plot_df, aes(
+  x = x_value,
+  y = y_value,
+  color = Wave_num,
+  alpha = Wave_num,
+  size = wave_size
+)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey60") +
+
+  geom_point() +
+
+  # average black dot
+  geom_point(
+    data = avg_df,
+    aes(x = x_avg, y = y_avg),
+    inherit.aes = FALSE,
+    color = "black",
+    size = 4
+  ) +
+
+  geom_text(
+    data = plot_df %>% distinct(panel, x_label),
+    aes(x = 0, y = -1.8, label = x_label),
+    inherit.aes = FALSE,
+    size = 3.5
+  ) +
+
+  geom_text(
+    data = plot_df %>% distinct(panel, y_label),
+    aes(x = -1.8, y = 0, label = y_label),
+    inherit.aes = FALSE,
+    angle = 90,
+    size = 3.5
+  ) +
+
+  facet_wrap(~panel, ncol = 3) +
+
+  scale_color_gradient(
+    low = "#8B0000",
+    high = "#FFC0CB",
+    breaks = wave_breaks,
+    labels = wave_breaks,
+    name = "Wave",
+    guide = guide_colorbar(reverse = TRUE)
+  ) +
+
+  scale_alpha(range = c(1, 0.4), guide = "none") +
+
+  scale_size_continuous(
+    name = "Wave size",
+    range = c(2.5, 6)
+  ) +
+
+  coord_cartesian(
+    xlim = c(-2, 2),
+    ylim = c(-2, 2)
+  ) +
+
+  labs(
+    title = "Wave-level Mean PCA Scores (Darker = earlier waves)"
+  ) +
+
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),
+    strip.text = element_blank()
+  )
+p1
+ggsave("hawk_spca.png", plot = p1, width = 8, height = 6, dpi = 300)
+```
+
+## Logistic PCA
+```{r}
+library(logisticPCA)
+
+dat_lpca_imp <- dat_imp_seq %>%
+  dplyr::select(all_of(pca_vars)) %>%
+  mutate(across(everything(), as.numeric))
+
+dim(dat_lpca_imp)
+
+X_lpca <- as.matrix(dat_lpca_imp)
+```
+
+### Choose an optimal value of `m`
+```{r}
+cv_fit <- cv.lpca(X_lpca, ks =length(pca_vars), ms = 1:10)
+plot(cv_fit)
+```
+
+### 508
+```{r}
+cv_fit <- cv.lpca(X_lpca, ks = length(pca_vars), ms = 1:10)
+
+# one-row frame so the reference line draws once (and gets one legend key)
+opt_m <- data.frame(xintercept = 3)
+
+p <- plot(cv_fit) +
+
+  # --- NEW: dashed vertical line at m = 3, shown in legend as "Optimal m" ---
+  geom_vline(
+    data = opt_m,
+    aes(xintercept = xintercept, linetype = "Optimal m"),
+    colour = "black", linewidth = 0.7, inherit.aes = FALSE
+  ) +
+  scale_linetype_manual(name = NULL, values = c("Optimal m" = "dashed")) +
+
+  # --- axis + legend titles ---
+  labs(
+    x      = "Tuning parameter m",
+    y      = "Log-likelihood",
+    colour = "Number of PCs"
+  ) +
+
+  # --- 508: recolour the data line to a high-contrast, colorblind-safe blue ---
+  scale_colour_manual(
+    values = "#0072B2",
+    labels = paste0(length(pca_vars), " PCs")
+  ) +
+
+  theme_bw() +
+  theme(
+    axis.title   = element_text(size = 16),
+    axis.text    = element_text(size = 13, colour = "black"),
+    legend.title = element_text(size = 14),
+    legend.text  = element_text(size = 13)
+  )
+p
+ggsave("pathHAWK_cv_FINAL.png", plot = p, width = 8, height = 5, dpi = 300)
+
+```
+
+```{r}
+lpca_imp <- logisticPCA(
+  X_lpca,
+  k = length(pca_vars),
+  m = 3
+)
+
+lpca_imp
+
+## Logistic PCA summary, similar to summary(pca_imp)
+lpca_scores_imp <- as.data.frame(lpca_imp$PCs)
+
+colnames(lpca_scores_imp) <- paste0("PC", 1:ncol(lpca_scores_imp))
+
+lpca_scores_imp$id <- 1:nrow(lpca_scores_imp)
+
+lpca_scores_only <- lpca_scores_imp %>%
+  dplyr::select(starts_with("PC"))
+
+lpca_sd <- apply(lpca_scores_only, 2, sd)
+
+lpca_var <- lpca_sd^2
+lpca_prop_var <- lpca_var / sum(lpca_var)
+lpca_cum_var <- cumsum(lpca_prop_var)
+
+lpca_summary <- rbind(
+  `Standard deviation` = lpca_sd,
+  `Proportion of Variance` = lpca_prop_var,
+  `Cumulative Proportion` = lpca_cum_var
+)
+
+round(lpca_summary, 5)
+
+## Logistic PCA loadings
+lpca_rotation <- lpca_imp$U
+rownames(lpca_rotation) <- pca_vars
+colnames(lpca_rotation) <- paste0("PC", 1:ncol(lpca_rotation))
+
+round(lpca_rotation, 2)
+```
+
+## Logistic PCA loadings check
+```{r}
+load_lpca_pc1 <- data.frame(
+  variable = rownames(lpca_rotation),
+  PC1 = lpca_rotation[, 1]
+)
+
+load_lpca_pc1 %>%
+  arrange(desc(abs(PC1))) %>%
+  head(10)
+
+load_lpca_pc2 <- data.frame(
+  variable = rownames(lpca_rotation),
+  PC2 = lpca_rotation[, 2]
+)
+
+load_lpca_pc2 %>%
+  arrange(desc(abs(PC2))) %>%
+  head(10)
+```
+
+## Logistic PC distribution (histogram)
+```{r}
+lpca_scores_scaled <- lpca_scores_imp %>%
+  mutate(across(starts_with("PC"), ~ as.numeric(scale(.x))))
+
+lpca_long <- lpca_scores_scaled %>%
+  pivot_longer(
+    cols = starts_with("PC"),
+    names_to = "PC",
+    values_to = "score"
+  )
+
+ggplot(lpca_long %>% filter(PC %in% paste0("PC", 1:9)),
+       aes(x = score)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~PC, scales = "free") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of First 9 Logistic Principal Components (Imputed Data)",
+    x = "Logistic PC score",
+    y = "Count"
+  )
+
+ggplot(lpca_long %>% filter(PC %in% paste0("PC", 10:length(pca_vars))),
+       aes(x = score)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~PC, scales = "free") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of Remaining Logistic Principal Components (Imputed Data)",
+    x = "Logistic PC score",
+    y = "Count"
+  )
+
+```
+
+## Logistic PCA plot by wave
+```{r, fig.width=8, fig.height=4.5}
+pc_scores_ind_lpca <- lpca_scores_scaled %>%
+  dplyr::select(PC1:PC7)
+
+pc_scores_ind_lpca$Wave <- dat_bin$WAVE
+
+wave_lpca_mean <- pc_scores_ind_lpca %>%
+  filter(!is.na(Wave)) %>%
+  group_by(Wave) %>%
+  summarise(
+    wave_size = n(),
+    across(starts_with("PC"), mean, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+lpca_var_exp <- lpca_prop_var * 100
+
+plot_df_lpca <- wave_lpca_mean %>%
+  pivot_longer(
+    cols = c(PC2, PC3, PC4, PC5, PC6, PC7),
+    names_to = "PC_y",
+    values_to = "y_value"
+  ) %>%
+  mutate(
+    x_value = PC1,
+    Wave_num = as.numeric(Wave),
+    x_label = paste0("PC1 (", round(lpca_var_exp[1], 1), "%)"),
+    y_label = case_when(
+      PC_y == "PC2" ~ paste0("PC2 (", round(lpca_var_exp[2], 1), "%)"),
+      PC_y == "PC3" ~ paste0("PC3 (", round(lpca_var_exp[3], 1), "%)"),
+      PC_y == "PC4" ~ paste0("PC4 (", round(lpca_var_exp[4], 1), "%)"),
+      PC_y == "PC5" ~ paste0("PC5 (", round(lpca_var_exp[5], 1), "%)"),
+      PC_y == "PC6" ~ paste0("PC6 (", round(lpca_var_exp[6], 1), "%)"),
+      PC_y == "PC7" ~ paste0("PC7 (", round(lpca_var_exp[7], 1), "%)")
+    ),
+    panel = paste0(x_label, " vs ", y_label)
+  )
+
+avg_df_lpca <- plot_df_lpca %>%
+  group_by(panel) %>%
+  summarise(
+    x_avg = weighted.mean(x_value, wave_size, na.rm = TRUE),
+    y_avg = weighted.mean(y_value, wave_size, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+wave_breaks <- c(0, 5, 10, 15)
+
+ggplot(plot_df_lpca, aes(
+  x = x_value,
+  y = y_value,
+  color = Wave_num,
+  alpha = Wave_num,
+  size = wave_size
+)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey60") +
+
+  geom_point() +
+
+  geom_point(
+    data = avg_df_lpca,
+    aes(x = x_avg, y = y_avg),
+    inherit.aes = FALSE,
+    color = "black",
+    size = 4
+  ) +
+
+  geom_text(
+    data = plot_df_lpca %>% distinct(panel, x_label),
+    aes(x = 0, y = -1.8, label = x_label),
+    inherit.aes = FALSE,
+    size = 3.5
+  ) +
+
+  geom_text(
+    data = plot_df_lpca %>% distinct(panel, y_label),
+    aes(x = -1.8, y = 0, label = y_label),
+    inherit.aes = FALSE,
+    angle = 90,
+    size = 3.5
+  ) +
+
+  facet_wrap(~panel, ncol = 3) +
+
+  scale_color_gradient(
+    low = "#8B0000",
+    high = "#FFC0CB",
+    breaks = wave_breaks,
+    labels = wave_breaks,
+    name = "Wave",
+    guide = guide_colorbar(reverse = TRUE)
+  ) +
+
+  scale_alpha(range = c(1, 0.4), guide = "none") +
+
+  scale_size_continuous(
+    name = "Wave size",
+    range = c(2.5, 6)
+  ) +
+
+  coord_cartesian(
+    xlim = c(-2, 2),
+    ylim = c(-2, 2)
+  ) +
+
+  labs(
+    title = "Wave-level Mean Logistic PCA Scores (Darker = earlier waves)"
+  ) +
+
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),
+    strip.text = element_blank()
+  )
+  
+```
+
+## SORTED Logistic PCA plot by wave
+```{r}
+# Select only the score columns (those starting with "V") from the imputed LPCA scores data frame
+lpca_scores_imp <- as.data.frame(lpca_imp$PCs)
+
+lpca_scores_only <- lpca_scores_imp %>%
+  dplyr::select(starts_with("V"))
+
+# Compute the standard deviation of each score column
+lpca_sd <- apply(lpca_scores_only, 2, sd)
+# Square the standard deviations to get the variance of each component
+lpca_var <- lpca_sd^2
+# Compute each component's proportion of total variance
+lpca_prop_var <- lpca_var / sum(lpca_var)
+
+# reorder everything by descending variance before computing cumulative sum
+var_order <- order(lpca_prop_var, decreasing = TRUE)
+lpca_sd       <- lpca_sd[var_order]
+lpca_var      <- lpca_var[var_order]
+lpca_prop_var <- lpca_prop_var[var_order]
+
+# cumulative sum is now computed on the sorted proportions
+lpca_cum_var <- cumsum(lpca_prop_var)
+
+# reorder the score columns to match
+lpca_scores_only <- lpca_scores_only[, var_order]
+lpca_scores_imp  <- lpca_scores_imp[, var_order]
+
+lpca_summary <- rbind(
+  `Standard deviation`    = lpca_sd,
+  `Proportion of Variance` = lpca_prop_var,
+  `Cumulative Proportion`  = lpca_cum_var
+)
+round(lpca_summary, 5)
+```
+
+```{r}
+as.data.frame(lpca_imp$U) %>%
+  `rownames<-`(pca_vars)  
+```
+
+```{r}
+# as.data.frame(lpca_imp$U) %>%
+#   `rownames<-`(pca_vars) %>%
+#   filter(abs(V2) > 0.3) %>%
+#   select(V2) %>%
+#   mutate(V = round(V2,2))
+for (v in paste0("V", 1:7)) {
+  result <- as.data.frame(lpca_imp$U) %>%
+    `rownames<-`(pca_vars) %>%
+    filter(abs(.data[[v]]) > 0.3) %>%
+    select(all_of(v)) %>%
+    mutate(V = round(.data[[v]], 2))
+  
+  print("-----------------------------------")
+  print(paste("Component:", v))
+  print(result)
+}
+```
+
+```{r}
+write.csv(lpca_scores_scaled, "lpca_scores_scaled_HAWK.csv")
+write.csv(lpca_scores_imp, "lpca_scores_imp_HAWK.csv")
+write.csv(dat_bin, "dat_bin_HAWK.csv")
+write.csv(lpca_prop_var, "lpca_prop_var_HAWK.csv")
+```
+
+```{r, fig.width=8, fig.height=4.5}
+pc_scores_ind_lpca <- lpca_scores_scaled %>%
+  dplyr::select(PC1:PC8)
+
+pc_scores_ind_lpca$Wave <- dat_bin$WAVE
+
+wave_lpca_mean <- pc_scores_ind_lpca %>%
+  filter(!is.na(Wave)) %>%
+  group_by(Wave) %>%
+  summarise(
+    wave_size = n(),
+    across(starts_with("PC"), mean, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+lpca_var_exp <- lpca_prop_var * 100
+
+plot_df_lpca <- wave_lpca_mean %>%
+  pivot_longer(
+    cols = c(PC3, PC4, PC5, PC6, PC7, PC1),
+    names_to = "PC_y",
+    values_to = "y_value"
+  ) %>%
+  mutate(
+    x_value = PC2,
+    Wave_num = as.numeric(Wave),
+    x_label = paste0("PC2 (", round(lpca_var_exp[1], 1), "%)"),
+    y_label = case_when(
+      PC_y == "PC3" ~ paste0("PC3 (", round(lpca_var_exp[2], 1), "%)"),
+      PC_y == "PC4" ~ paste0("PC4 (", round(lpca_var_exp[3], 1), "%)"),
+      PC_y == "PC5" ~ paste0("PC5 (", round(lpca_var_exp[4], 1), "%)"),
+      PC_y == "PC6" ~ paste0("PC6 (", round(lpca_var_exp[5], 1), "%)"),
+      PC_y == "PC7" ~ paste0("PC7 (", round(lpca_var_exp[6], 1), "%)"),
+      PC_y == "PC1" ~ paste0("PC1 (", round(lpca_var_exp[7], 1), "%)")
+    ),
+    panel = paste0(x_label, " vs ", y_label)
+  )
+
+plot_df_lpca <- plot_df_lpca %>%
+  mutate(PC_y = factor(PC_y, levels = c("PC3", "PC4", "PC5", "PC6", "PC7", "PC1")),
+         panel = factor(panel, levels = unique(panel[order(PC_y)])))
+
+avg_df_lpca <- plot_df_lpca %>%
+  group_by(panel) %>%
+  summarise(
+    x_avg = weighted.mean(x_value, wave_size, na.rm = TRUE),
+    y_avg = weighted.mean(y_value, wave_size, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+wave_breaks <- c(0, 5, 10, 15)
+
+p2 <- ggplot(plot_df_lpca, aes(
+  x = x_value,
+  y = y_value,
+  color = Wave_num,
+  alpha = Wave_num,
+  size = wave_size
+)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey60") +
+
+  geom_point() +
+
+  geom_point(
+    data = avg_df_lpca,
+    aes(x = x_avg, y = y_avg),
+    inherit.aes = FALSE,
+    color = "black",
+    size = 4
+  ) +
+
+  geom_text(
+    data = plot_df_lpca %>% distinct(panel, x_label),
+    aes(x = 0, y = -1.8, label = x_label),
+    inherit.aes = FALSE,
+    size = 3.5
+  ) +
+
+  geom_text(
+    data = plot_df_lpca %>% distinct(panel, y_label),
+    aes(x = -1.8, y = 0, label = y_label),
+    inherit.aes = FALSE,
+    angle = 90,
+    size = 3.5
+  ) +
+
+  facet_wrap(~panel, ncol = 3) +
+
+  scale_color_gradient(
+    low = "#8B0000",
+    high = "#FFC0CB",
+    breaks = wave_breaks,
+    labels = wave_breaks,
+    name = "Wave",
+    guide = guide_colorbar(reverse = TRUE)
+  ) +
+
+  scale_alpha(range = c(1, 0.4), guide = "none") +
+
+  scale_size_continuous(
+    name = "Wave size",
+    range = c(2.5, 6)
+  ) +
+
+  coord_cartesian(
+    xlim = c(-2, 2),
+    ylim = c(-2, 2)
+  ) +
+
+  labs(
+    title = "Wave-level Mean Logistic PCA Scores (Darker = earlier waves)"
+  ) +
+
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),
+    strip.text = element_blank()
+  )
+p2
+ggsave("hawk_lpca.png", plot = p2, width = 8, height = 6, dpi = 300)
+  
+```
+
+
+```{r}
+# write.csv(lpca_scores_scaled, "lpca_scores_scaled_HAWK.csv")
+# write.csv(lpca_scores_imp, "lpca_scores_imp_HAWK.csv")
+# write.csv(dat_bin, "dat_bin_HAWK.csv")
+# write.csv(lpca_prop_var, "lpca_prop_var_HAWK.csv")
+```

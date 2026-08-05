@@ -1,0 +1,849 @@
+---
+title: "ACS and HAWK Benchmarking"
+author: "SL" 
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(openxlsx)
+library(tidyverse)
+library(gridExtra)
+library(scales)
+library(gtsummary)
+library(knitr)
+library(kableExtra)
+options(scipen = 999)
+
+```
+ 
+##  1.2. Data read-in 
+```{r, echo=F}
+dat = read.csv('O:/Korean Health/Data/Codebook/Recoding/Data/DATA_ALL (5.20.2025).csv')
+
+hawk<-dat%>%
+  mutate(Age=AGE,
+         AgeGe40=ifelse(is.na(AGE),NA,ifelse(AGE>=40,1,0)),
+         Male=B1_MALE,
+         Married=B2_MARRIED,
+         EducGeCollege=B4_MTCOL,
+         CurWork=CUR_WORK,
+         USBorn=ifelse(is.na(G1),NA,ifelse(G1==1,1,0)),
+         USCitizen=ifelse(USBorn%in%c(1)|G5%in%c(1),1,0),
+         Intv_Lang=ifelse(LANG_INTERVIEW==1,"KR","EN"),
+         Region=ifelse(REGION=="",NA,REGION),
+         wave=WAVE,
+         num_coupon=COUPON_ISSUED,
+  num_recruit=COUPON_USED,
+contact_mode=ifelse(is.na(MODE),NA,ifelse(MODE==1,"Email","SMS")),
+         any_recruit=ifelse(is.na(COUPON_USED),NA,ifelse(
+           COUPON_USED>0,1,0)),
+         coupon_type=ifelse(is.na(MODE)|is.na(EXP_COUPON),NA,ifelse(
+           MODE==1&EXP_COUPON==1,"Email-Single",ifelse(
+             MODE==1&EXP_COUPON==2,"Email-Multiple",ifelse(
+               MODE==2&EXP_COUPON==1,"SMS-Verbal","SMS-Image")))),
+        num_recruit=COUPON_USED,
+         pct_recruit=ifelse(is.na(num_coupon),NA,num_recruit/num_coupon))
+```
+
+# 1. Respondent characteristics
+
+```{r, echo=FALSE}
+#https://www.danieldsjoberg.com/gtsummary/articles/tbl_summary.html 
+
+hawk%>%
+  select(Age, AgeGe40, Male, Married, 
+         EducGeCollege, CurWork, 
+         USBorn, USCitizen, Intv_Lang,Region)%>%
+  #gtsummary::tbl_summary(missing="no")%>%
+  tbl_summary(missing="no")%>%
+  #gtsummary::bold_labels() %>%
+  bold_labels() %>%
+  as_kable_extra(
+    format = "latex",
+    booktabs = TRUE,
+    linesep = ""
+  ) %>%
+  kable_styling(
+    position = "left",
+    latex_options = c("striped", "repeat_header"),
+    stripe_color = "gray!15"
+  )
+```
+ 
+ 
+
+# 2. Peer Recruitment
+```{r, echo=FALSE} 
+
+hawk%>%
+  select(num_coupon, num_recruit)%>%
+  tbl_summary(missing="no",
+              by=num_coupon,
+              label = num_recruit ~ "Recruit_Num")%>%
+  modify_header(label ~ "")%>%
+  modify_spanning_header(c("stat_1", "stat_2", "stat_3", "stat_4") ~ "**Coupon_Num**") %>%
+  bold_labels() %>% 
+  as_kable_extra(
+    format = "latex",
+    booktabs = TRUE,
+    #longtable = TRUE,
+    linesep = ""
+  ) %>%
+  kable_styling(
+    position = "left",
+    latex_options = c("striped", "repeat_header"),
+    stripe_color = "gray!15"
+  )
+```
+
++ Coupon use rate:  `r paste0(round(sum(hawk$num_recruit[hawk$num_coupon>0],na.rm=T)/sum(hawk$num_coupon[hawk$num_coupon>0],na.rm=T)*100,1),"%")`
+
++ Chain length of `r length(unique(hawk$SEED_ID))` seeds
+
+```{r, echo=FALSE}
+
+ChainLength<-hawk%>%
+  group_by(SEED_ID)%>%
+  summarise(ChainLength=max(wave)+1,
+            ChainSampleSize=n())
+
+ChainLength%>%  
+  ggplot(aes(x=ChainLength))+
+  geom_histogram(color="blue", fill="royalblue1")+
+  theme(axis.text = element_text(size = 15),
+        axis.title = element_text(size = 20))
+```
+
+```{r, echo=FALSE}
+ChainLength%>%  
+  ggplot(aes(x=ChainSampleSize))+
+  geom_histogram(color="red4", fill="tomato1")+
+  theme(axis.text = element_text(size = 15),
+        axis.title = element_text(size = 20))
+```
+
+```{r, echo=FALSE}
+ChainLength%>%
+  ggplot(aes(x=ChainLength,y=ChainSampleSize))+
+  geom_point(position="jitter")+
+  geom_smooth()+
+  theme(axis.text = element_text(size = 15),
+        axis.title = element_text(size = 20))
+
+```
+
+```{r} 
+summary(ChainLength$ChainLength)
+summary(ChainLength$ChainSampleSize)
+```
+
+# 3. Coupon Delivery Mode
+
+## 3.1 Among everyone 
+
+```{r, echo=FALSE}
+dat<-hawk%>%
+  filter(contact_mode%in%c("Email","SMS")&!is.na(any_recruit))
+
+dat%>%
+  select(any_recruit, pct_recruit, num_recruit, contact_mode)%>%
+  tbl_summary(missing="no",
+              by=contact_mode,
+              type = list(c(any_recruit,pct_recruit,num_recruit) ~ 'continuous'),
+              statistic = list(all_continuous() ~ "{mean} ({sd})"),
+              digits = all_continuous() ~ 2)%>%
+    bold_labels()%>%
+  as_kable_extra(
+    format = "latex",
+    booktabs = TRUE,
+    #longtable = TRUE,
+    linesep = ""
+  ) %>%
+  kable_styling(
+    position = "left",
+    latex_options = c("striped", "repeat_header"),
+    stripe_color = "gray!15"
+  )
+
+```
+
+- Wilcoxon test
+```{r}
+wilcox.test(any_recruit~contact_mode,dat)
+wilcox.test(pct_recruit~contact_mode,dat)
+wilcox.test(num_recruit~contact_mode,dat)
+```
+
+
+## 3.2 Among those for whom mode was randomized
++ There were `r length(hawk$RESPONDENT_ID[hawk$CONTACT_NUM1==2])` respondents who provide both email and phone number.
+
+```{r, echo=FALSE}
+dat2<-hawk%>%
+  mutate(contact_num1=CONTACT_NUM1)%>%
+  filter(contact_mode%in%c("Email","SMS")&!is.na(any_recruit)&contact_num1==2)
+```
+
+```{r, results='asis'}
+tab_se <- dat2 %>%
+  select(any_recruit, pct_recruit, num_recruit, contact_mode) %>%
+  pivot_longer(
+    cols = c(any_recruit, pct_recruit, num_recruit),
+    names_to = "variable",
+    values_to = "value"
+  ) %>%
+  group_by(variable, contact_mode) %>%
+  summarise(
+    mean = mean(value, na.rm = TRUE),
+    se = sd(value, na.rm = TRUE) / sqrt(sum(!is.na(value))),
+    mean_se = sprintf("%.2f (%.2f)", mean, se),
+    .groups = "drop"
+  ) %>%
+  select(variable, contact_mode, mean_se) %>%
+  pivot_wider(
+    names_from = contact_mode,
+    values_from = mean_se
+  )
+tab_se
+```
+
+- Wilcoxon Test 
+```{r}
+wilcox.test(num_recruit~contact_mode,dat2)
+wilcox.test(any_recruit~contact_mode,dat2)
+wilcox.test(pct_recruit~contact_mode,dat2)
+
+table(dat2$contact_mode,exclude=NULL)
+```
+```{r, echo=FALSE} 
+#summary(glm(any_recruit~contact_mode,dat2,family="binomial"))
+#summary(glm(any_recruit~contact_mode*AgeGe40,dat2,family="binomial"))
+
+#summary(glm(num_recruit~contact_mode+num_coupon,dat2,family="quasipoisson"))
+#summary(glm(num_recruit~contact_mode*AgeGe40+num_coupon,dat2,family="quasipoisson"))
+
+```
+
+## 3.3. Mode Interaction with Age
+```{r, echo=FALSE, eval=FALSE}
+
+
+dat2<-dat2%>%
+  mutate(Age=ifelse(is.na(AGE),NA, ifelse(AGE<35,"Age<35","Age>=35")))
+
+dat2%>% 
+  group_by(contact_mode,Age)%>%
+  summarise(m=mean(any_recruit),
+            se = sd(any_recruit, na.rm = TRUE) / sqrt(sum(!is.na(any_recruit))))
+
+summary(glm(any_recruit~contact_mode*Age,data=dat2,
+            family = binomial(link = "logit")))
+
+```
+
+```{r}
+plot_dat <- dat2 %>% 
+  group_by(contact_mode, Age) %>%
+  summarise(
+    m = mean(any_recruit, na.rm = TRUE),
+    se = sd(any_recruit, na.rm = TRUE) / sqrt(sum(!is.na(any_recruit))),
+    .groups = "drop"
+  )
+
+```
+
+```{r}
+
+p_age<-ggplot(plot_dat, aes(x = Age, y = m, 
+                            color = contact_mode, 
+                            group = contact_mode)) +
+  geom_point(
+    position = position_dodge(width = 0.4),
+    size = 4
+  ) +
+  geom_errorbar(
+    aes(ymin = m - 1.96*se, ymax = m + 1.96*se),
+    position = position_dodge(width = 0.4),
+    width = 0.2
+  )  +
+   scale_color_manual(
+    values = c(
+      "#0072B2",  # blue
+      "#D55E00" # vermillion
+    )
+  )+ 
+  scale_y_continuous(
+    labels = scales::label_percent(accuracy = 1),
+    limits = c(0, NA)
+  ) +
+  labs(
+    x = "Recruiter age",
+    y = "Any recruits",
+    color = "Contact mode"
+  ) +
+  theme_minimal()+
+  theme(
+  legend.position = c(0.85, 0.20),
+  legend.background = element_rect(fill = "white", color = "gray70"),
+      axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    legend.title = element_text(size = 15, face = "bold"),
+    legend.text = element_text(size = 14)
+)
+
+ggsave(filename = "O:/Korean Health/Analysis/SL/NCSES/Figure_AgeContact_NCSES.jpg",
+       plot = p_age, width = 8, height = 5, dpi = 100, bg = "white")
+```
+
+
+```{r, echo=FALSE, eval=FALSE}
+
+
+## Gives count, mean, standard deviation, standard error of the mean, and confidence interval (default 95%).
+##   data: a data frame.
+##   measurevar: the name of a column that contains the variable to be summariezed
+##   groupvars: a vector containing names of columns that contain grouping variables
+##   na.rm: a boolean that indicates whether to ignore NA's
+##   conf.interval: the percent range of the confidence interval (default is 95%)
+summarySE <- function(data=NULL, measurevar, groupvars=NULL, na.rm=T,
+                      conf.interval=.95) {
+datac <- data%>%
+      select(measurevar, groupvars)%>%
+      group_by(groupvars)%>%
+      summarise(N=n(),
+                mean=mean (measurevar, na.rm=na.rm),
+                sd=sd(measurevar, na.rm=na.rm),
+                se=sd(measurevar, na.rm=na.rm)/n(),
+                ci=se*qt(conf.interval/2 + .5, n()-1))
+
+    return(datac)
+}
+  
+```
+
+```{r, echo=FALSE} 
+pd <- position_dodge(0.1) # move them .05 to the left and right
+
+dat2%>%
+  mutate(Age=ifelse(AgeGe40==1,"Age>=40","Age<40"))%>%
+      select(pct_recruit, num_coupon, Age, contact_mode)%>%
+      group_by(num_coupon, Age, contact_mode)%>%
+      summarise(N=n(),
+                pct_recruit=mean (pct_recruit, na.rm=T),
+                sd=sd(pct_recruit, na.rm=T),
+                se=sd(pct_recruit, na.rm=T)/n(),
+                ci=se*qt(.95/2 + .5, n()-1))%>%
+ggplot(aes(x=num_coupon,y=pct_recruit, color=contact_mode))+
+  geom_line(position=pd, size=2)+
+  geom_point(position=pd)+
+facet_grid(~Age)+
+  theme(strip.text.x = element_text(size = 18),
+        axis.title = element_text(size = 15),
+        legend.position = c(0.85, 0.2),
+        legend.text=element_text(size=15),
+        legend.title=element_blank())
+
+```
+
+```{r, echo=FALSE}
+dat2%>%
+  mutate(Age=ifelse(AgeGe40==1,"Age>=40","Age<40"))%>%
+      select(any_recruit, num_coupon, Age, contact_mode)%>%
+      group_by(num_coupon, Age, contact_mode)%>%
+      summarise(N=n(),
+                any_recruit=mean (any_recruit, na.rm=T),
+                sd=sd(any_recruit, na.rm=T),
+                se=sd(any_recruit, na.rm=T)/n(),
+                ci=se*qt(.95/2 + .5, n()-1))%>%
+ggplot(aes(x=num_coupon,y=any_recruit, color=contact_mode))+
+  geom_line(position=pd, size=2)+
+  geom_point(position=pd)+
+facet_grid(~Age)+
+  theme(strip.text.x = element_text(size = 18),
+        axis.title = element_text(size = 15),
+        legend.position = c(0.85, 0.2),
+        legend.text=element_text(size=15),
+        legend.title=element_blank())
+
+
+
+#dat%>%
+#  mutate(Age=ifelse(AgeGe40==1,"Age>=40","Age<40"))%>%
+#ggplot(aes(x=num_coupon,y=num_recruit, color=Age))+
+#facet_grid(~contact_mode)+
+#  geom_smooth(method="lm", se=FALSE)
+
+```
+
+ 
+# 4. Coupon type
+```{r, echo=FALSE}
+
+dat2%>%
+  group_by(coupon_type)%>%
+  summarise(n=n(),
+            m=mean(any_recruit),
+            se = sd(any_recruit, na.rm = TRUE) / sqrt(sum(!is.na(any_recruit))))
+``` 
+
+```{r}
+plot_coupon <- dat2 %>%
+  group_by(coupon_type) %>%
+  summarise(
+    n = n(),
+    m = mean(any_recruit, na.rm = TRUE),
+    se = sd(any_recruit, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  )
+plot_coupon <- plot_coupon %>%
+  mutate(
+    coupon_label = paste0(coupon_type, "\n(n=", n, ")")
+  )
+
+```
+
+```{r}
+p_coupon<-ggplot(plot_coupon, aes(x = coupon_label, y = m)) +
+  geom_col(fill = "#0072B2", color = "black", width = 0.5, linewidth = 0.4) +
+  geom_errorbar(
+    aes(ymin = m - 1.96*se, ymax = m + 1.96*se),
+    width = 0.1, linewidth = 0.4, color = "black"
+  ) +
+  scale_y_continuous(
+    labels = label_percent(accuracy = 1),
+    limits = c(0, NA),
+    expand = expansion(mult = c(0, 0.08))
+  ) +
+  labs(
+    x = "Coupon type",
+    y = "Any recruits"
+  ) +
+  theme_minimal(base_size = 14)+
+  theme(
+     axis.title.x = element_text(size = 16, face = "bold"),
+     axis.title.y = element_text(size = 16, face = "bold"),
+     axis.text.x = element_text(size = 16),
+     axis.text.y = element_text(size = 14),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank()
+   )
+
+
+ggsave(filename = "O:/Korean Health/Analysis/SL/NCSES/Figure_Coupon_NCSES.jpg",
+       plot = p_coupon, width = 8, height = 5, dpi = 100, bg = "white")
+
+```
+
+
+- Wilcoxon Test 
+```{r}
+wilcox.test(num_recruit~coupon_type,dat2%>%filter(contact_mode=="Email"))
+wilcox.test(num_recruit~coupon_type,dat2%>%filter(contact_mode=="SMS"))
+wilcox.test(any_recruit~coupon_type,dat2%>%filter(contact_mode=="Email"))
+wilcox.test(any_recruit~coupon_type,dat2%>%filter(contact_mode=="SMS"))
+wilcox.test(pct_recruit~coupon_type,dat2%>%filter(contact_mode=="Email"))
+wilcox.test(pct_recruit~coupon_type,dat2%>%filter(contact_mode=="SMS"))
+
+table(dat2$contact_mode)
+```
+
+```{r, echo=FALSE}
+
+dat2%>%
+      select(any_recruit, num_coupon, coupon_type)%>%
+      group_by(num_coupon, coupon_type)%>%
+      summarise(N=n(),
+                any_recruit=mean (any_recruit, na.rm=T),
+                sd=sd(any_recruit, na.rm=T),
+                se=sd(any_recruit, na.rm=T)/n(),
+                ci=se*qt(.95/2 + .5, n()-1))%>%
+ggplot(aes(x=num_coupon,y=any_recruit, color=coupon_type))+
+  geom_line(position=pd, size=2)+
+  geom_point(position=pd)+
+  theme(strip.text.x = element_text(size = 18),
+        axis.title = element_text(size = 15),
+        legend.position = c(0.8, 0.23),
+        legend.text=element_text(size=15),
+        legend.title=element_blank())
+```
+
+```{r, echo=FALSE}
+dat%>%
+      select(pct_recruit, num_coupon, coupon_type)%>%
+      group_by(num_coupon, coupon_type)%>%
+      summarise(N=n(),
+                percent_recruit=mean (pct_recruit, na.rm=T),
+                sd=sd(pct_recruit, na.rm=T),
+                se=sd(pct_recruit, na.rm=T)/n(),
+                ci=se*qt(.95/2 + .5, n()-1))%>%
+ggplot(aes(x=num_coupon,y=percent_recruit, color=coupon_type))+
+  geom_line(position=pd, size=2)+
+  geom_point(position=pd)+
+  theme(strip.text.x = element_text(size = 18),
+        axis.title = element_text(size = 15),
+        legend.position = c(0.8, 0.23),
+        legend.text=element_text(size=15),
+        legend.title=element_blank())
+```
+
+```{r, echo=FALSE}
+dat%>%
+      select(num_recruit, num_coupon, coupon_type)%>%
+      group_by(num_coupon, coupon_type)%>%
+      summarise(N=n(),
+                num_recruit=mean (num_recruit, na.rm=T),
+                sd=sd(num_recruit, na.rm=T),
+                se=sd(num_recruit, na.rm=T)/n(),
+                ci=se*qt(.95/2 + .5, n()-1))%>%
+ggplot(aes(x=num_coupon,y=num_recruit, color=coupon_type))+
+  geom_line(position=pd, size=2)+
+  geom_point(position=pd)+
+  theme(strip.text.x = element_text(size = 18),
+        axis.title = element_text(size = 15),
+        legend.position = c(0.8, 0.23),
+        legend.text=element_text(size=15),
+        legend.title=element_blank())
+
+
+```
+
+## 4.1 Email
+
+
+```{r, echo=FALSE}
+dat%>%
+  filter(contact_mode=="Email")%>%
+  mutate(Age=ifelse(AgeGe40==1,"Age>=40","Age<40"))%>%
+      select(any_recruit, num_coupon, Age, coupon_type)%>%
+      group_by(num_coupon, Age, coupon_type)%>%
+      summarise(N=n(),
+                any_recruit=mean (any_recruit, na.rm=T),
+                sd=sd(any_recruit, na.rm=T),
+                se=sd(any_recruit, na.rm=T)/n(),
+                ci=se*qt(.95/2 + .5, n()-1))%>%
+ggplot(aes(x=num_coupon,y=any_recruit, color=coupon_type))+
+  geom_line(position=pd, size=2)+
+  geom_point(position=pd)+
+facet_grid(~Age)+
+  theme(strip.text.x = element_text(size = 18),
+        axis.title = element_text(size = 15),
+        legend.position = c(0.8, 0.2),
+        legend.text=element_text(size=15),
+        legend.title=element_blank())
+```
+
+```{r, echo=FALSE}
+dat%>%
+  filter(contact_mode=="Email")%>%
+  mutate(Age=ifelse(AgeGe40==1,"Age>=40","Age<40"))%>%
+      select(pct_recruit, num_coupon, Age, coupon_type)%>%
+      group_by(num_coupon, Age, coupon_type)%>%
+      summarise(N=n(),
+                percent_recruit=mean (pct_recruit, na.rm=T),
+                sd=sd(pct_recruit, na.rm=T),
+                se=sd(pct_recruit, na.rm=T)/n(),
+                ci=se*qt(.95/2 + .5, n()-1))%>%
+ggplot(aes(x=num_coupon,y=percent_recruit, color=coupon_type))+
+  geom_line(position=pd, size=2)+
+  geom_point(position=pd)+
+facet_grid(~Age)+
+  theme(strip.text.x = element_text(size = 18),
+        axis.title = element_text(size = 15),
+        legend.position = c(0.8, 0.2),
+        legend.text=element_text(size=15),
+        legend.title=element_blank())
+```
+
+```{r, echo=FALSE}
+dat%>%
+  filter(contact_mode=="Email")%>%
+  mutate(Age=ifelse(AgeGe40==1,"Age>=40","Age<40"))%>%
+      select(num_recruit, num_coupon, Age, coupon_type)%>%
+      group_by(num_coupon, Age, coupon_type)%>%
+      summarise(N=n(),
+                num_recruit=mean (num_recruit, na.rm=T),
+                sd=sd(num_recruit, na.rm=T),
+                se=sd(num_recruit, na.rm=T)/n(),
+                ci=se*qt(.95/2 + .5, n()-1))%>%
+ggplot(aes(x=num_coupon,y=num_recruit, color=coupon_type))+
+  geom_line(position=pd, size=2)+
+  geom_point(position=pd)+
+facet_grid(~Age)+
+  theme(strip.text.x = element_text(size = 18),
+        axis.title = element_text(size = 15),
+        legend.position = c(0.8, 0.2),
+        legend.text=element_text(size=15),
+        legend.title=element_blank())
+
+
+datE<-dat%>%
+  filter(contact_mode=="Email")
+
+```
+
+```{r}
+
+wilcox.test(datE$any_recruit~datE$coupon_type, paired=FALSE)
+wilcox.test(datE$pct_recruit~datE$coupon_type, paired=FALSE)
+wilcox.test(datE$num_recruit~datE$coupon_type, paired=FALSE)
+
+wilcox.test(any_recruit~coupon_type, paired=FALSE, data=subset(datE,AgeGe40==1))
+wilcox.test(any_recruit~coupon_type, paired=FALSE, data=subset(datE,AgeGe40==0))
+wilcox.test(pct_recruit~coupon_type, paired=FALSE, data=subset(datE,AgeGe40==1))
+wilcox.test(pct_recruit~coupon_type, paired=FALSE, data=subset(datE,AgeGe40==0))
+wilcox.test(num_recruit~coupon_type, paired=FALSE, data=subset(datE,AgeGe40==1))
+wilcox.test(num_recruit~coupon_type, paired=FALSE, data=subset(datE,AgeGe40==0))
+
+```
+
+```{r, echo=FALSE,eval=FALSE}
+ 
+hawk%>%
+  group_by(coupon_type)%>%
+  summarise(p=mean(pct_recruit,na.rm=T))
+
+dat%>%
+  group_by(coupon_type)%>%
+  summarise(p=mean(pct_recruit))
+
+ds<-summarySE(dat%>%
+  mutate(Age=ifelse(AGEP>=30,"Age>=30","Age<30")), 
+  measurevar="num_recruit", groupvars=c("Age","num_coupon","coupon_type"))
+
+ds%>%
+ggplot(aes(x=num_coupon,y=num_recruit, color=Age))+
+  geom_line(position=pd)+
+  geom_point(position=pd)+
+facet_grid(~coupon_type)
+
+dat2%>%filter(contact_mode=="Email")%>%
+  tabyl(any_recruit,coupon_type)
+ 
+dat2E<-dat2%>%filter(contact_mode=="Email")
+
+summary(glm(any_recruit~coupon_type+num_coupon, 
+            subset(dat2,contact_mode=="Email"),
+            family=quasibinomial))
+
+
+summary(glm(any_recruit~coupon_type+num_coupon, 
+            subset(dat2,contact_mode=="SMS"),
+            family=quasibinomial))
+
+
+summary(glm(num_recruit~coupon_type+num_coupon, 
+            subset(dat2,contact_mode=="Email"),
+            family=quasipoisson))
+
+
+summary(glm(num_recruit~coupon_type+num_coupon, 
+            subset(dat2,contact_mode=="SMS"),
+            family=quasipoisson))
+
+
+summary(glm(num_recruit~coupon_type, dat2, family=quasipoisson()))
+
+
+dat2E%>%
+tabyl(num_recruit,coupon_type)%>%
+adorn_percentages("col")%>%
+  adorn_pct_formatting(digits=1)%>%
+  adorn_ns()
+
+
+dat2E%>%
+tabyl(any_recruit,coupon_type)%>%
+adorn_percentages("col")%>%
+  adorn_pct_formatting(digits=1)%>%
+  adorn_ns()
+
+
+
+dat2E%>%
+  group_by(coupon_type)%>%
+  summarise(m_p=mean(pct_recruit),
+            m_n=mean(num_recruit),
+            m_a=mean(any_recruit))%>%
+  summarise(p.value = t.test(pct_recruit ~ coupon_type, paired = TRUE)$p.value)
+
+dat2E %>%
+  group_by(coupon_type) %>%
+  mutate(pval = wilcox.test(pct_recruit~coupon_type, paired=FALSE)$p.value)
+
+
+wilcox.test(dat2E$pct_recruit~dat2E$coupon_type, paired=FALSE)
+wilcox.test(dat2E$num_recruit~dat2E$coupon_type, paired=FALSE)
+wilcox.test(dat2E$any_recruit~dat2E$coupon_type, paired=FALSE)
+
+dat%>%
+  filter(contact_mode=="Email")%>%
+  group_by(coupon_type)%>%
+  summarise(p=mean(pct_recruit))
+
+datE<-dat%>%
+  filter(contact_mode=="Email")
+wilcox.test(datE$pct_recruit~datE$coupon_type, paired=FALSE)
+wilcox.test(datE$num_recruit~datE$coupon_type, paired=FALSE)
+wilcox.test(datE$any_recruit~datE$coupon_type, paired=FALSE)
+
+dat2E%>%
+  group_by(coupon_type)%>%
+  summarise(m=mean(pct_recruit))
+
+dat2E%>%
+  group_by(coupon_type)%>%
+  summarise(m=mean(pct_recruit))
+
+ 
+
+dat2E%>%
+  tabyl(coupon_type) 
+
+hawk%>%
+  filter(contact_mode=="Email")%>%
+  mutate(seed=ifelse(wave==0,"1.Seed","2.NonSeed"))%>%
+  tabyl(coupon_type,seed)%>%
+  adorn_percentages("col")%>%
+  adorn_pct_formatting(digits=1)%>%
+  adorn_ns()
+
+View(seed)
+
+table(hawk$coupon_type)
+
+table(is.na(hawk$seed_id),hawk$wave,exclude=NULL)
+
+View(hawk%>%
+group_by(seed_id)%>%
+  select(seed_id,coupon_type))
+
+
+sum(hawk$coupon_type=="E-All")
+
+CouponType<-hawk%>%
+group_by(seed_id)%>%
+  summarise(p_EA=sum(coupon_type=="E-All")/n(),
+            p_ES=sum(coupon_type=="E-Sep")/n(),
+            p_SI=sum(coupon_type=="S-Img")/n(),
+            p_ST=sum(coupon_type=="S-Text")/n(),
+            ChainN=n())%>%
+  left_join(ChainLength,by="seed_id")
+#View(CouponType)
+
+CouponType%>%
+  select(p_EA,p_ES,p_ST,p_SI,ChainLength,ChainN)%>%
+  cor()
+install.packages("psych")
+library(psych)
+paired.r(cor(CouponType$p_EA,CouponType$ChainN), 
+         cor(CouponType$p_ES,CouponType$ChainN), 
+         n=56)
+
+paired.r(cor(CouponType$p_SI,CouponType$ChainN), 
+         cor(CouponType$p_ST,CouponType$ChainN), 
+         n=56)
+
+
+table(hawk$coupon_type=="E-All")[2]/table(!is.na(hawk$coupon_type))[1]
+
+hawk%>%
+  filter(contact_mode=="SMS")%>%
+  mutate(seed=ifelse(wave==0,"1.Seed","2.NonSeed"))%>%
+  tabyl(coupon_type,seed)%>%
+  adorn_percentages("col")%>%
+  adorn_pct_formatting(digits=1)%>%
+  adorn_ns()
+
+```
+
+
+
+## 5.2 Text 
+
+```{r, echo=FALSE}
+dat%>%
+  filter(contact_mode=="SMS")%>%
+  mutate(Age=ifelse(AgeGe40==1,"Age>=40","Age<40"))%>%
+      select(any_recruit, num_coupon, Age, coupon_type)%>%
+      group_by(num_coupon, Age, coupon_type)%>%
+      summarise(N=n(),
+                any_recruit=mean (any_recruit, na.rm=T),
+                sd=sd(any_recruit, na.rm=T),
+                se=sd(any_recruit, na.rm=T)/n(),
+                ci=se*qt(.95/2 + .5, n()-1))%>%
+ggplot(aes(x=num_coupon,y=any_recruit, color=coupon_type))+
+  geom_line(position=pd, size=2)+
+  geom_point(position=pd)+
+facet_grid(~Age)+
+  theme(strip.text.x = element_text(size = 18),
+        axis.title = element_text(size = 15),
+        legend.position = c(0.15, 0.8),
+        legend.text=element_text(size=15),
+        legend.title=element_blank())
+```
+
+```{r, echo=FALSE}
+dat%>%
+  filter(contact_mode=="SMS")%>%
+  mutate(Age=ifelse(AgeGe40==1,"Age>=40","Age<40"))%>%
+      select(pct_recruit, num_coupon, Age, coupon_type)%>%
+      group_by(num_coupon, Age, coupon_type)%>%
+      summarise(N=n(),
+                percent_recruit=mean (pct_recruit, na.rm=T),
+                sd=sd(pct_recruit, na.rm=T),
+                se=sd(pct_recruit, na.rm=T)/n(),
+                ci=se*qt(.95/2 + .5, n()-1))%>%
+ggplot(aes(x=num_coupon,y=percent_recruit, color=coupon_type))+
+  geom_line(position=pd, size=2)+
+  geom_point(position=pd)+
+facet_grid(~Age)+
+  theme(strip.text.x = element_text(size = 18),
+        axis.title = element_text(size = 15),
+        legend.position = c(0.15, 0.8),
+        legend.text=element_text(size=15),
+        legend.title=element_blank())
+
+```
+
+```{r, echo=FALSE}
+dat%>%
+  filter(contact_mode=="SMS")%>%
+  mutate(Age=ifelse(AgeGe40==1,"Age>=40","Age<40"))%>%
+      select(num_recruit, num_coupon, Age, coupon_type)%>%
+      group_by(num_coupon, Age, coupon_type)%>%
+      summarise(N=n(),
+                num_recruit=mean (num_recruit, na.rm=T),
+                sd=sd(num_recruit, na.rm=T),
+                se=sd(num_recruit, na.rm=T)/n(),
+                ci=se*qt(.95/2 + .5, n()-1))%>%
+ggplot(aes(x=num_coupon,y=num_recruit, color=coupon_type))+
+  geom_line(position=pd, size=2)+
+  geom_point(position=pd)+
+facet_grid(~Age)+
+  theme(strip.text.x = element_text(size = 18),
+        axis.title = element_text(size = 15),
+        legend.position = c(0.15, 0.8),
+        legend.text=element_text(size=15),
+        legend.title=element_blank())
+
+datS<-dat%>%
+  filter(contact_mode=="SMS")
+```
+
+```{r}
+wilcox.test(datS$pct_recruit~datS$coupon_type, paired=FALSE)
+wilcox.test(datS$num_recruit~datS$coupon_type, paired=FALSE)
+wilcox.test(datS$any_recruit~datS$coupon_type, paired=FALSE)
+
+wilcox.test(any_recruit~coupon_type, paired=FALSE, data=subset(datS,AgeGe40==1))
+wilcox.test(any_recruit~coupon_type, paired=FALSE, data=subset(datS,AgeGe40==0))
+wilcox.test(pct_recruit~coupon_type, paired=FALSE, data=subset(datS,AgeGe40==1))
+wilcox.test(pct_recruit~coupon_type, paired=FALSE, data=subset(datS,AgeGe40==0))
+wilcox.test(num_recruit~coupon_type, paired=FALSE, data=subset(datS,AgeGe40==1))
+wilcox.test(num_recruit~coupon_type, paired=FALSE, data=subset(datS,AgeGe40==0))
+
+```

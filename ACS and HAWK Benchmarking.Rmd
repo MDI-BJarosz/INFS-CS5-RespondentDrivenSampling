@@ -1,0 +1,192 @@
+---
+title: "ACS and HAWK Benchmarking"
+author: "SL" 
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(openxlsx)
+library(tidyverse)
+library(gridExtra)
+library(scales)
+options(scipen = 999)
+
+```
+
+## ACS and HAWK Benchmarking
+The code below prepares the data for figures 2-4. But first merge the results from HAWK and ACS estimation into one file
+
+# 1. Variable lists 
+```{r, echo=T} 
+
+all_var = c("Age: <35 yrs", "Age: 35-64 yrs", "Age: >=65 yrs", 
+            "Sex: Female", "Sex: Male", 
+            "Educ: <College", "Educ: =College", "Educ: >College",  
+            "Employed: No", "Employed",
+            "Income: <$30K","Income: >=$70K","Income: $30-70K",
+            "Married", "Married: No", 
+            "Single hhld: No", "Single hhld",
+            "Hhld w child: No", "Hhld w child",
+            "US born: No", "US born",
+            "Entered US <2010", "Entered US >=2010", 
+            "US citizen", "US citizen: No", 
+            "Ltd Eng prof: No", "Ltd Eng prof", 
+            "Region: MW", "Region: NE", 
+            "Region: SO", "Region: WE", 
+            "Insured: No", "Insured",
+            "Ins: Employer - No", "Ins: Employer", 
+            "Ins: Purchased - No","Ins: Purchased", 
+            "Ins: Govt prog - No", "Ins: Govt prog", 
+            "Disability: No","Disability")
+ 
+
+sel_var = c("Age: <35 yrs", "Age: 35-64 yrs", "Age: >=65 yrs", 
+            "Sex: Female", 
+            "Educ: <College", "Educ: =College", "Educ: >College", 
+            "Employed",
+            "Income: <$30K","Income: >=$70K","Income: $30-70K",
+            "Married", 
+            "Single hhld",
+            "Hhld w child",
+            "US born",
+            "Entered US >=2010", 
+            "US citizen", 
+            "Ltd Eng prof", 
+            "Region: MW", 
+            "Region: NE", 
+            "Region: SO", 
+            "Region: WE", 
+            "Insured",
+            "Ins: Employer", 
+            "Ins: Purchased", 
+            "Ins: Govt prog", 
+            "Disability")
+```
+ 
+
+
+#2. Reading in data
+```{r}
+sel<-read.xlsx('O:/Korean Health/Analysis/SL/HAWK_ACS/data/all_est.xlsx')
+```
+
+
+#3. Variable order  
+```{r}
+dat <- sel %>% 
+  filter(type %in% c('ACS', 'HAWK'))
+
+# Calculate absolute differences and sort them
+datOrder <- dat %>% 
+  group_by(variable) %>%
+  summarize(diff = abs((mean[type == 'HAWK'] - mean[type == 'ACS']) * 100)) %>%
+  arrange(desc(diff)) # Sort by absolute difference, descending 
+```
+
+
+# 4. Figure: ACS, HAWK Mail, and HAWK Nonmail
+
+```{r} 
+
+##################### FIGURE 2
+fig <- sel %>% 
+  filter(type %in% c('ACS', 'HAWK_Mail', 'HAWK_Nonmail'))
+
+# Re-labeling
+fig$type <- factor(fig$type, 
+                    levels = c('ACS', 'HAWK_Mail', 'HAWK_Nonmail'), 
+                    labels = c("ACS", 
+                               "HAWK: Mail (n=222)",
+                               "HAWK: NonMail (n=550)")) 
+# reordering
+fig <- fig %>% filter(variable %in% datOrder$variable)
+
+fig$variable  <- factor(fig$variable, 
+                         levels = datOrder$variable)
+
+fig  <- fig %>%
+  mutate(type_order = case_when(
+      type == "ACS" ~ 1,
+      type == "HAWK: Mail (n=222)"~ 2,
+      type == "HAWK: NonMail (n=550)" ~ 3
+    ),
+    y_position = as.numeric(factor(variable)) + (type_order - 2) * 0.12
+  )
+
+
+Figure <- ggplot(fig, aes(x = mean * 100)) +
+  geom_point(
+    aes(y = y_position, shape = type, color = type, fill = type, alpha = type), 
+    size = 4, 
+    stroke = 1
+  ) +  
+  scale_y_continuous(
+    breaks=seq_along(levels(fig$variable)),
+    #breaks = unique(as.numeric(factor(fig3$variable))),
+    labels = levels(factor(fig$variable))
+  ) +
+  labs(x = NULL, y = NULL) + 
+  scale_color_manual(values = c(
+    "ACS" = "black",
+    "HAWK: Mail (n=222)" = "#0072B2",
+    "HAWK: NonMail (n=550)"  = "#D55E00"
+  )) +
+  scale_fill_manual(values = c(
+    "ACS" = "black",
+    "HAWK: Mail (n=222)" = "#0072B2",
+    "HAWK: NonMail (n=550)" = "#D55E00"
+  )) +
+  scale_shape_manual(values = c(
+    "ACS" = 4,        # X shape
+     "HAWK: Mail (n=222)" = 21,
+     "HAWK: NonMail (n=550)"  = 21
+  )) +
+  scale_alpha_manual(values = c(
+  "ACS" = 1,
+   "HAWK: Mail (n=222)"  = 1,
+  "HAWK: NonMail (n=550)" = 1
+  )) +
+  guides(
+    color = guide_legend(title = NULL, 
+                         override.aes = list(
+      linetype = "blank", 
+      shape = c(4, 21, 21),  # Shape for each type
+      fill = c("black", "#0072B2", "#D55E00"),
+      color = c("black", "#0072B2", "#D55E00")
+    )),
+    shape = guide_legend(title = NULL),
+    alpha = guide_legend(title = NULL),
+    fill = "none"
+  ) +
+  scale_x_continuous(
+    labels = label_percent(scale = 1),  # Use the scales package to format labels
+    breaks = seq(0, 100, by = 10),
+    limits = c(-10, 100),
+    expand = c(0.02, 0.02)
+  ) +
+  theme_bw() + theme(
+    axis.title.x = element_blank(),
+    axis.text.y = element_text(size = 18),
+    axis.text.x = element_text(size = 16),
+    legend.text = element_text(size = 18),
+    legend.title = element_blank(),
+    #  legend.position = "top",  # Changed to top
+    #  legend.justification = c("center"),
+    #  legend.box = "horizontal",
+    plot.margin = margin(5, 5, 5, 10),
+    legend.position = c(0.99, 0.39),
+    legend.justification = c("right", "top"),
+    legend.background = element_rect(fill = "white", colour = "black", size = 0.5)
+      
+  ) 
+
+ 
+
+Figure
+
+
+ggsave(filename = "O:/Korean Health/Analysis/SL/NCSES/Figure_Seeds_NCSES.jpg",
+       plot = Figure, width = 13, height = 10, dpi = 100, bg = "white")
+```

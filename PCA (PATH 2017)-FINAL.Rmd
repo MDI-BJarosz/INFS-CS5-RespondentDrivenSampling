@@ -1,0 +1,1337 @@
+---
+title: "PCA (PATH 2017)-10.05.2026"
+output: html_document
+date: "2026-05-10"
+---
+
+# Set up
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load-packages, include=FALSE}
+if (!require("pacman", quietly = TRUE)) install.packages("pacman")
+pacman::p_load(
+  dplyr, tidyr, ggplot2, ggforce, stringr, forcats, purrr,
+  janitor, skimr, gtsummary, writexl, vcd, reshape2, haven
+)
+```
+
+```{r}
+PATH2017 <- read_sas("O:\\slteam\\RDS\\Study 2_IDU\\Data\\AO\\merged_data.sas7bdat")
+dim(PATH2017)
+df <- PATH2017
+
+df$SNW
+
+df %>% 
+  select(M_SNQ2, M_SNQ1_1, M_SNQ1_2, M_SNQ2, M_NETSIZE)
+```
+
+```{r}
+# summarise_col <- function(df, col) {
+#   x <- df[[col]]
+#   n_total <- length(x)
+#   n_na    <- sum(is.na(x))
+#   n_valid <- n_total - n_na
+# 
+#   cat("Column:", col, "\n")
+#   cat("Total:", n_total, "| Valid:", n_valid, "| NAs:", n_na, "\n\n")
+# 
+#   if (is.numeric(x)) {
+#     # ── Numeric ──────────────────────────────────────────
+#     cat("Type: numeric\n")
+#     cat(sprintf(
+#       "  Min    : %g\n  Q1     : %g\n  Median : %g\n  Mean   : %g\n  Q3     : %g\n  Max    : %g\n  SD     : %g\n",
+#       min(x, na.rm = TRUE),
+#       quantile(x, 0.25, na.rm = TRUE),
+#       median(x, na.rm = TRUE),
+#       mean(x, na.rm = TRUE),
+#       quantile(x, 0.75, na.rm = TRUE),
+#       max(x, na.rm = TRUE),
+#       sd(x, na.rm = TRUE)
+#     ))
+# 
+#   } else {
+#     # ── Categorical (factor, character, logical) ──────────
+#     cat("Type: categorical\n\n")
+#     tbl  <- sort(table(x, useNA = "no"), decreasing = TRUE)
+#     pcts <- round(100 * tbl / n_valid, 1)
+# 
+#     df_out <- data.frame(
+#       label   = names(tbl),
+#       n       = as.integer(tbl),
+#       percent = paste0(pcts, "%"),
+#       stringsAsFactors = FALSE
+#     )
+#     print(df_out, row.names = FALSE)
+#     cat("\nLevels:", length(tbl), "\n")
+#   }
+# }
+# summary_stats <- function(df, col) {
+#   x <- df[[col]]
+#   
+#   list(
+#     n       = length(x),
+#     n_na    = sum(is.na(x)),
+#     mean    = mean(x, na.rm = TRUE),
+#     sd      = sd(x, na.rm = TRUE),
+#     min     = min(x, na.rm = TRUE),
+#     q1      = quantile(x, 0.25, na.rm = TRUE),
+#     median  = median(x, na.rm = TRUE),
+#     q3      = quantile(x, 0.75, na.rm = TRUE),
+#     max     = max(x, na.rm = TRUE)
+#   )
+# }
+```
+
+```{r}
+# col <- "M_HQ3"
+# 
+# summarise_col(df, col)
+# unique(df[[col]])
+# df$IS_SC5_OTHER
+```
+
+# Preprocessing
+## Get required variables
+```{r}
+var_list <- c(
+  # grouping
+  "WAVE_NUM", # wave number
+  "SEED", # is seed or not
+  
+  # sociodemographic
+  "PS_Q5", # age
+  "M_AQ1", # gender
+  grep("^M_AQ3_", names(df), value = TRUE), # race
+  "M_AQ6", # education
+  "M_HQ1", # employment stats
+  "M_AQ4", # marital status
+  "M_HQ3", # income
+  "PS_Q3", # lives in greater detroit
+  "M_HQ9", # homeless in the past year
+  "M_HQ9_1", # homeless currently
+  
+  # injection behaviour
+  grep("^IS_SC5_", names(df), value = TRUE), # drugs used
+  "IS_SC6", # drug injected most often
+  grep("^M_DQ1_", names(df), value = TRUE), # age when first using IS_SC6
+  "M_DQ3", # Frequency of use for drug injected most often in the past 12 months
+  "M_DQ7", # frequency of use of sterile needle in past 12 months
+  "M_DQ28", # ever overdosed on a drug
+  "M_DQ11", # need to use more [IS_SC6] than in the past in past 12 months
+  "M_DQ12", # past 12 Months: Want to cut down or stop [IS_SC6]
+  "M_DQ13", # has problems with emotions, nerves, mental health as result of use of [IS_SC6] in past 12 months
+  "M_DQ14", # has physical health problems as result of use of [IS_SC6] in past 12 months
+  "M_DQ15", # Problems with family as result of use of [SC6] in past 12 months
+  "M_DQ16", # Problems at work, home, school as result of use of [SC6] in past 12 months
+  "M_DQ17", # Has trouble with the law due to injecting drugs in past 12 months
+  "M_DQ28_3", # Ever received Narcan
+  "M_DQ31", # Respondent, respondent's family/friends have access to Narcan
+  "M_NUMBER_INT", #	Network size: Known injection drug users interact with more than once a week
+  
+  # mental health
+  "M_EQ1", # global life satisfaction
+  
+  # physical health
+  "M_BQ1", # self-rate health
+  "M_GQ5", # ever had HIV test
+  "M_GQ8", # ever HIV positive
+  "M_BQ2", # Ever tested for hepatitis C
+  "M_BQ3", # Respondent ever has hepatitis C
+  "M_BQ10", # Feeling age (years)
+  
+  # social network
+  "M_NUMBER_CLS", # Known injection drug users respondent feel close to
+  "M_NUMBER_CLS", # Known injection drug users respondent feel close to
+  "M_NETSIZE", # Computed, people known who inject
+  "M_NUMBER_INT" # 	Network size: Known injection drug users interact with more than once a week
+)
+
+var_list_exist <- var_list[var_list %in% names(df)]
+missing_cols <- setdiff(var_list, var_list_exist)
+
+if(length(missing_cols) > 0){
+  message("These variables are not found in df: ", paste(missing_cols, collapse = ", "))
+}
+
+dat_raw <- df %>%
+  dplyr::select(all_of(var_list_exist))
+
+# Drop instances where SEED is empty
+dat_raw <- dat_raw %>% 
+  filter(!is.na(SEED))
+```
+
+## Create binary variables
+
+```{r}
+dat_raw %>%
+  group_by(IS_SC6) %>%
+  tally()
+```
+
+```{r}
+dat_raw %>%
+  filter(IS_SC5_OS!="") %>%
+  select(IS_SC5_OS)
+# IS_SC5 allows for multiselect
+# IS_SC6 is only asked if respondents choose more than one drug in IS_SC5
+
+test <- dat_raw %>%
+  dplyr::mutate(
+    multi.drug = case_when(IS_SC5_SPDBALL + IS_SC5_HEROIN + IS_SC5_COCAINE + IS_SC5_CRACK + IS_SC5_CRYSTAL + IS_SC5_OPIATE + IS_SC5_OTHER > 1 ~ 1,
+                           IS_SC5_SPDBALL + IS_SC5_HEROIN + IS_SC5_COCAINE + IS_SC5_CRACK + IS_SC5_CRYSTAL + IS_SC5_OPIATE + IS_SC5_OTHER <= 1 ~ 0,
+                           TRUE ~ NA_real_),
+    heroin_most_freq = case_when(IS_SC5_HEROIN == 1 & multi.drug == 0 ~ 1,               # Respondent only uses heroin
+                                 multi.drug == 1 & IS_SC6 == 2 ~ 1,                      # Respondent uses multiple drugs and heroin IS the most frequently used
+                                 IS_SC5_HEROIN == 0 ~ 0,                                 # Respondent doesn't report using heroin
+                                 multi.drug == 1 & IS_SC6 != 2 ~ 0,                      # Respondent uses multiple drugs and heroin is not the most frequently used
+                                 TRUE ~ NA_real_),
+    # Get the age the respondent was when they first started injecting their most frequently used drug
+    DQ3 = case_when((IS_SC5_SPDBALL == 1 & multi.drug == 0) |  (multi.drug == 1 & IS_SC6 == 1) ~ M_DQ1_1,
+                    (IS_SC5_HEROIN == 1 & multi.drug == 0) | (multi.drug == 1 & IS_SC6 == 2) ~ M_DQ1_2,
+                    (IS_SC5_COCAINE == 1 & multi.drug == 0) | (multi.drug == 1 & IS_SC6 == 3) ~ M_DQ1_3,
+                    (IS_SC5_CRACK == 1 & multi.drug == 0) | (multi.drug == 1 & IS_SC6 == 4) ~ M_DQ1_4,
+                    (IS_SC5_CRYSTAL == 1 & multi.drug == 0) | (multi.drug == 1 & IS_SC6 == 5) ~ M_DQ1_5,
+                    (IS_SC5_OPIATE == 1 & multi.drug == 0) ~ M_DQ1_6, # IC_SC6 doesn't have a level corresponding to 'opiate'
+                    (IS_SC5_OTHER == 1 & multi.drug == 0) ~ M_DQ1_7, # IC_SC6 doesn't have a level corresponding to 'other'
+                    TRUE ~ NA_real_ ),
+    INJECT_NUM = IS_SC5_SPDBALL + IS_SC5_HEROIN + IS_SC5_COCAINE + IS_SC5_CRACK + IS_SC5_CRYSTAL + IS_SC5_OPIATE + IS_SC5_OTHER,
+  )
+test %>%
+  group_by(multi.drug) %>%
+  tally()
+test %>%
+  group_by(heroin_most_freq) %>%
+  tally()
+test %>%
+  select(IS_SC5_SPDBALL , IS_SC5_HEROIN , IS_SC5_COCAINE , IS_SC5_CRACK , IS_SC5_CRYSTAL , IS_SC5_OPIATE , IS_SC5_OTHER, IS_SC6, INJECT_NUM, multi.drug, heroin_most_freq,
+         M_DQ1_1, M_DQ1_2,  M_DQ1_3,  M_DQ1_4,  M_DQ1_5,  M_DQ1_6,  M_DQ1_7, DQ3)
+test %>%
+  select(M_DQ1_1, M_DQ1_2,  M_DQ1_3,  M_DQ1_4,  M_DQ1_5,  M_DQ1_6,  M_DQ1_7)
+```
+
+```{r}
+income_cut <- 10000
+inject_years_cut <- 15
+
+dat_bin <- dat_raw %>%
+  dplyr::mutate(
+    seed01 = dplyr::case_when(
+      SEED == 1 ~ 1,
+      SEED == 0 ~ 0,
+      TRUE ~ NA_real_
+    ),
+    seed_group = factor(seed01, levels = c(0, 1), labels = c("Non-seed", "Seed")),
+    
+    ## helper continuous variables
+    # Calculate the difference between how someone feels and how hold they actually are
+    # Introduce difference upper limit of 100 -> in these cases set age_feel_diff to 0
+    age_feel_diff = dplyr::case_when(
+      !is.na(M_BQ10) & !is.na(PS_Q5) & abs(M_BQ10 - PS_Q5) <= 100 ~ M_BQ10 - PS_Q5,
+      TRUE ~ NA_real_
+    ),
+    
+    multi.drug = case_when(IS_SC5_SPDBALL + IS_SC5_HEROIN + IS_SC5_COCAINE + IS_SC5_CRACK + IS_SC5_CRYSTAL + IS_SC5_OPIATE + IS_SC5_OTHER > 1 ~ 1,
+                           IS_SC5_SPDBALL + IS_SC5_HEROIN + IS_SC5_COCAINE + IS_SC5_CRACK + IS_SC5_CRYSTAL + IS_SC5_OPIATE + IS_SC5_OTHER <= 1 ~ 0,
+                           TRUE ~ NA_real_),
+    
+    # years of injecting (current age less age when first injected)
+    DQ3 = case_when((IS_SC5_SPDBALL == 1 & multi.drug == 0) |  (multi.drug == 1 & IS_SC6 == 1) ~ M_DQ1_1,
+                    (IS_SC5_HEROIN == 1 & multi.drug == 0) | (multi.drug == 1 & IS_SC6 == 2) ~ M_DQ1_2,
+                    (IS_SC5_COCAINE == 1 & multi.drug == 0) | (multi.drug == 1 & IS_SC6 == 3) ~ M_DQ1_3,
+                    (IS_SC5_CRACK == 1 & multi.drug == 0) | (multi.drug == 1 & IS_SC6 == 4) ~ M_DQ1_4,
+                    (IS_SC5_CRYSTAL == 1 & multi.drug == 0) | (multi.drug == 1 & IS_SC6 == 5) ~ M_DQ1_5,
+                    (IS_SC5_OPIATE == 1 & multi.drug == 0) ~ M_DQ1_6, # IC_SC6 doesn't have a level corresponding to 'opiate'
+                    (IS_SC5_OTHER == 1 & multi.drug == 0) ~ M_DQ1_7, # IC_SC6 doesn't have a level corresponding to 'other'
+                    TRUE ~ NA_real_ ),
+    inject_years = dplyr::case_when(
+      !is.na(DQ3) & !is.na(PS_Q5) & DQ3 < PS_Q5 ~ PS_Q5 - DQ3,
+      TRUE ~ NA_real_
+    ),
+    
+    # Sociodemographic
+    age_lt40 = dplyr::case_when(
+      PS_Q5 < 40 ~ 1,
+      !is.na(PS_Q5) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    male = dplyr::case_when(
+      M_AQ1 == 1 ~ 1, # males == 1
+      M_AQ1 %in% c(0, 2) ~ 0, # females == 0
+      TRUE ~ NA_real_
+    ),
+    
+    race_nh_black = dplyr::case_when(
+      M_AQ3_BLACK == 1 ~ 1,
+      M_AQ3_AIAN == 1 & M_AQ3_BLACK != 1 ~ 0,
+      M_AQ3_ASIAN == 1 & M_AQ3_BLACK != 1  ~ 0,
+      M_AQ3_MENA == 1 & M_AQ3_BLACK != 1  ~ 0,
+      M_AQ3_NHPI == 1 & M_AQ3_BLACK != 1  ~ 0,
+      M_AQ3_WHITE == 1 & M_AQ3_BLACK != 1  ~ 0,
+      M_AQ3_WHITE == 1 & M_AQ3_BLACK != 1  ~ 0,  
+      TRUE ~ NA_real_
+    ),
+    
+    somecollege_plus = dplyr::case_when(
+      M_AQ6 >= 6 ~ 1,
+      !is.na(M_AQ6) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    employed = dplyr::case_when(
+      M_HQ1 %in% c(1, 2) ~ 1, 
+      M_HQ1 %in% c(4, 5, 6, 7) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    married_partnered = dplyr::case_when(
+      M_AQ4 %in% c(1, 2) ~ 1,
+      M_AQ4 %in% c(3, 4, 5) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    income_le10000 = dplyr::case_when(
+      M_HQ3 >= income_cut ~ 1,
+      !is.na(M_HQ3) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    homeless_any = dplyr::case_when(
+      M_HQ9 == 1 | M_HQ9_1 == 1 ~ 1,
+      M_HQ9 %in% c(0, 2) | M_HQ9_1 %in% c(0, 2) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    # Injection Behavior
+    multi.drug = case_when(IS_SC5_SPDBALL + IS_SC5_HEROIN + IS_SC5_COCAINE + IS_SC5_CRACK + IS_SC5_CRYSTAL + IS_SC5_OPIATE + IS_SC5_OTHER > 1 ~ 1,
+                           IS_SC5_SPDBALL + IS_SC5_HEROIN + IS_SC5_COCAINE + IS_SC5_CRACK + IS_SC5_CRYSTAL + IS_SC5_OPIATE + IS_SC5_OTHER <= 1 ~ 0,
+                           TRUE ~ NA_real_),
+    heroin_most_freq = case_when(IS_SC5_HEROIN == 1 & multi.drug == 0 ~ 1,               # Respondent only uses heroin
+                                 multi.drug == 1 & IS_SC6 == 2 ~ 1,                      # Respondent uses multiple drugs and heroin is the most frequently used
+                                 IS_SC5_HEROIN == 0 ~ 0,                                 # Respondent doesn't report using heroin
+                                 multi.drug == 1 & IS_SC6 != 2 ~ 0,                      # Respondent uses multiple drugs and heroin is not the most frequently used
+                                 TRUE ~ NA_real_),
+    
+    INJECT_NUM = IS_SC5_SPDBALL + IS_SC5_HEROIN + IS_SC5_COCAINE + IS_SC5_CRACK + IS_SC5_CRYSTAL + IS_SC5_OPIATE + IS_SC5_OTHER,
+    
+    drugs_injected_ge2 = dplyr::case_when(
+      INJECT_NUM >= 2 ~ 1,
+      !is.na(INJECT_NUM) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    inject_timelength = dplyr::case_when(
+      !is.na(inject_years) & inject_years >= inject_years_cut ~ 1,
+      !is.na(inject_years) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    inject_more_than_once_day = dplyr::case_when(
+      M_DQ3 == 1 ~ 1,
+      !is.na(M_DQ3) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    sterile_needle_always = dplyr::case_when(
+      M_DQ7 == 5 ~ 1,
+      !is.na(M_DQ7) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    need_more_drug_same_effect = dplyr::case_when(
+      M_DQ11 == 1 ~ 1,
+      M_DQ11 %in% c(0, 2) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    tried_reduce_stop_drug = dplyr::case_when(
+      M_DQ12 == 1 ~ 1,
+      M_DQ12 %in% c(0, 2) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    drug_emotional_physical_issue = dplyr::case_when(
+      M_DQ13 == 1  ~ 1,
+      M_DQ13 %in% c(0, 2) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    drug_family_issue = dplyr::case_when(
+      M_DQ15 == 1 ~ 1,
+      M_DQ15 %in% c(0, 2) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    drug_homeworkschool_issue = dplyr::case_when(
+      M_DQ16 == 1 ~ 1,
+      M_DQ16 %in% c(0, 2) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    drug_legal_issue = dplyr::case_when(
+      M_DQ17 == 1 ~ 1,
+      M_DQ17 %in% c(0, 2) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    ever_overdose = dplyr::case_when(
+      M_DQ28 == 1 ~ 1,
+      M_DQ28 %in% c(0, 2) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    have_narcan = dplyr::case_when(
+      M_DQ28_3 == 1 ~ 1,
+      M_DQ28_3 %in% c(0, 2) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    narcan_access = dplyr::case_when(
+      M_DQ31 == 1 ~ 1,
+      M_DQ31 %in% c(0, 2) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    # Mental health
+    life_satisfaction_low = dplyr::case_when(
+      M_EQ1 %in% c(4, 5) ~ 1,
+      M_EQ1 %in% c(1, 2, 3) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    age_feel_older = dplyr::case_when(
+      !is.na(age_feel_diff) & age_feel_diff > 0 ~ 1,
+      !is.na(age_feel_diff) & age_feel_diff <= 0 ~ 0,
+      TRUE ~ NA_real_
+    ), 
+    
+    # Physical health
+    srh_fairpoor = dplyr::case_when(
+      M_BQ1 %in% c(4, 5) ~ 1,
+      M_BQ1 %in% c(1, 2, 3) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    hiv_tested = dplyr::case_when(
+      M_GQ5 == 1 ~ 1,
+      M_GQ5 %in% c(0, 2) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    hiv_positive = dplyr::case_when(
+      M_GQ5 == 1 & M_GQ8 == 1 ~ 1,
+      M_GQ5 == 1 & M_GQ8 %in% c(0, 2) ~ 0,
+      M_GQ5 %in% c(0, 2) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    hepc_tested = dplyr::case_when(
+      M_BQ2 == 1 ~ 1,
+      M_BQ2 %in% c(0, 2) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    hepc_diagnosed = dplyr::case_when(
+      M_BQ2 == 1 & M_BQ3 == 1 ~ 1,
+      M_BQ2 == 1 & M_BQ3 %in% c(0, 2) ~ 0,
+      M_BQ2 %in% c(0, 2) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    # Social Network
+    pwid_network_gt10 = dplyr::case_when(
+      M_NETSIZE > 10 ~ 1,
+      !is.na(M_NETSIZE) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    interact_pwid_weekly_any = dplyr::case_when(
+      M_NUMBER_INT > 0 ~ 1,
+      !is.na(M_NUMBER_INT) ~ 0,
+      TRUE ~ NA_real_
+    )
+  ) 
+
+dat_raw %>% # oh wow really no missing
+  filter(is.na(M_GQ5) | M_GQ5=="") %>% 
+  select(M_GQ5)
+dat_raw %>% # oh wow there are a lot of missing
+  filter(is.na(IS_SC6) | IS_SC6=="") %>% 
+  select(IS_SC6)
+
+dat_bin %>%
+  group_by(heroin_most_freq) %>%
+  tally()
+```
+
+## Binary data checks
+```{r}
+dat_bin %>%
+  group_by(heroin_most_freq) %>%
+  tally() %>%
+  mutate(perc = round(n / sum(n) * 100, 1))
+
+vars <- c("DQ3")
+
+summary_table <- purrr::map_dfr(vars, function(var) {
+  col <- dat_bin[[var]]
+  unique_vals <- sort(unique(col[!is.na(col)]))
+  
+  tibble(
+    variable      = var,
+    unique_values = paste(unique_vals, collapse = ", "),
+    n_unique      = length(unique_vals),
+    n_missing     = sum(is.na(col)),
+    pct_missing   = round(mean(is.na(col)) * 100, 1)
+  )
+})
+
+print(summary_table)
+
+dat_bin %>%
+  group_by(INJECT_NUM) %>%
+  tally() %>%
+  mutate(perc = round(n / sum(n) * 100, 1))
+```
+
+## Correlation test
+
+```{r}
+# Sociodemographic
+cor(dat_bin[, c("homeless_any", "somecollege_plus", "income_le10000", "employed")], use = "pairwise.complete.obs")
+```
+
+```{r}
+# Injection Behavior
+cor(dat_bin[, c("drugs_injected_ge2", "heroin_most_freq", "inject_more_than_once_day", "inject_years", "sterile_needle_always", "need_more_drug_same_effect", "tried_reduce_stop_drug", "drug_emotional_physical_issue", "drug_family_issue", "drug_homeworkschool_issue", "drug_legal_issue", "ever_overdose", "have_narcan", "narcan_access")], use = "pairwise.complete.obs")
+```
+
+```{r}
+# Mental Health - only one var, no need to run correlation test
+# cor(dat_bin[, c("life_satisfaction_low")], use = "pairwise.complete.obs")
+```
+
+```{r}
+# Physical Health
+cor(dat_bin[, c("srh_fairpoor", "hiv_tested", "hiv_positive", "hepc_tested", "hepc_diagnosed", "age_feel_older")], use = "pairwise.complete.obs")
+```
+
+```{r}
+# Social Network
+cor(dat_bin[, c("interact_pwid_weekly_any", "pwid_network_gt10")], use = "pairwise.complete.obs")
+```
+
+
+# Missingness
+
+```{r}
+dat_miss_bin <- dat_bin %>%
+  dplyr::select(
+    seed01, seed_group,
+    # Sociodemographic
+    age_lt40,
+    male,
+    race_nh_black,
+    married_partnered,
+    income_le10000,
+    
+    # Mental Health
+    life_satisfaction_low,
+    
+    # Physical Health
+    srh_fairpoor,
+    hiv_tested,
+    
+    # Injection Behavior
+    drugs_injected_ge2,
+    heroin_most_freq,
+    inject_more_than_once_day,
+    need_more_drug_same_effect,
+    ever_overdose,
+    narcan_access
+  )
+
+var_labels_bin <- c(
+  # Sociodemographic
+  age_lt40 = "age < 40",
+  male = "male",
+  race_nh_black = "non-Hispanic Black",
+  married_partnered = "married or living with partner",
+  income_le10000 = "income >= 10000",
+  
+  # Mental Health
+  life_satisfaction_low = "life satisfaction low",
+  
+  # Physical Health
+  srh_fairpoor = "self-rated health fair/poor",
+  hiv_tested = "ever tested for HIV",
+  
+  # Injection Behavior
+  drugs_injected_ge2 = "number of drugs injected >= 2",
+  heroin_most_freq = "heroin most frequently used drug",
+  inject_more_than_once_day = "inject > once/day",
+  need_more_drug_same_effect = "need more drug for wanted effect",
+  ever_overdose = "ever overdosed",
+  narcan_access = "access to Narcan/Naloxone"
+)
+
+```
+
+## Plot
+```{r}
+analysis_vars_bin <- setdiff(names(dat_miss_bin), c("seed01","seed_group"))
+
+missing_overall_bin <- dat_miss_bin %>%
+  dplyr::summarise(across(all_of(analysis_vars_bin), ~mean(is.na(.))*100)) %>%
+  tidyr::pivot_longer(everything(), names_to = "variable", values_to = "pct_missing") %>%
+  dplyr::mutate(variable_label = dplyr::recode(variable, !!!var_labels_bin)) %>%
+  dplyr::arrange(desc(pct_missing))
+
+ggplot(missing_overall_bin,
+       aes(x = reorder(variable_label, pct_missing), y = pct_missing)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    x = NULL,
+    y = "% Missing",
+    title = "Missingness by binary variables (overall)"
+  ) +
+  theme_minimal()
+```
+## Table (for imputation understanding)
+```{r}
+missing_table_bin <- missing_overall_bin %>%
+  dplyr::select(variable, variable_label, pct_missing) %>%
+  dplyr::mutate(
+    pct_missing = round(pct_missing, 2)
+  ) %>%
+  dplyr::arrange(desc(pct_missing))
+
+print(missing_table_bin, n=11)
+
+```
+
+# PCA with imputation
+## PCA variable
+
+```{r}
+## seed01 could be predictor due to it don't have missing value, but not putting in PCA main analysis
+pca_vars <- setdiff(names(dat_miss_bin), c("CHAIN_WAVE", "seed01", "seed_group"))
+pca_vars
+imp_vars <- setdiff(names(dat_miss_bin), c("CHAIN_WAVE", "seed_group"))
+
+## missing rate
+miss_rate <- sapply(dat_miss_bin[imp_vars], function(x) mean(is.na(x)) * 100)
+
+miss_df <- data.frame(
+  variable = names(miss_rate),
+  pct_missing = as.numeric(miss_rate)
+) %>%
+  arrange(pct_missing) %>% 
+  filter(variable!="heroin_most_freq") 
+
+miss_df
+```
+
+## Hot deck
+```{r}
+## one-variable hot deck imputation
+# =============================================================================
+# HOT DECK IMPUTATION (single variable)
+#
+# Hot deck imputation fills in missing values by "borrowing" observed values
+# from similar records (donors). For each record with a missing target value
+# (recipient), we find the k most similar complete records using Euclidean
+# distance across the predictor columns, then randomly pick one of those k
+# donors to supply the missing value.
+#
+# Arguments:
+#   data       - a data frame that may contain NAs in the target column
+#   target     - string name of the column to impute
+#   predictors - character vector of column names used to measure similarity
+#   k          - how many nearest neighbours to draw from (default 5)
+#   seed       - random seed for reproducibility (default 123)
+#
+# Returns: a copy of `data` with NAs in `target` filled in.
+# =============================================================================
+hotdeck_one_var <- function(data, target, predictors, k = 5, seed = 123) {
+  set.seed(seed)
+
+  x <- data # Create copy
+
+  miss_idx <- which(is.na(x[[target]])) # row positions missing target
+  obs_idx  <- which(!is.na(x[[target]])) # row positions not missing target
+
+  if (length(miss_idx) == 0) return(x) # if nothing is missing, do nothing
+  
+  # edge case: no predictors -> impute by random sampling from observed values (no distance matching)
+  if (length(predictors) == 0) {
+    x[[target]][miss_idx] <- sample(x[[target]][obs_idx], # draw from observed target values
+                                    size = length(miss_idx), # one draw per missing 
+                                    replace = TRUE) # allow the same donor more than once
+    return(x)
+  }
+  # build predictor matrices for donors and recipients
+  donor_mat <- as.matrix(x[obs_idx, predictors, drop = FALSE]) # predictors for complete rows
+  recip_mat <- as.matrix(x[miss_idx, predictors, drop = FALSE]) # predictors for missing rows
+
+  ## coerce all values to be type numeric
+  donor_mat <- apply(donor_mat, 2, as.numeric)
+  recip_mat <- apply(recip_mat, 2, as.numeric)
+
+  ## If there is only one predictor, put in matrix
+  if (is.null(dim(donor_mat))) donor_mat <- matrix(donor_mat, ncol = 1)
+  if (is.null(dim(recip_mat))) recip_mat <- matrix(recip_mat, ncol = 1)
+
+  donor_y <- x[[target]][obs_idx] # observed target values that can be donated
+  
+  # For every recipient row, find its k nearest donors and pick one
+  imputed_values <- sapply(seq_len(nrow(recip_mat)), function(i) {
+    # Get the squared euclidean distance from recipient i to every donor row
+    d <- rowSums((t(t(donor_mat) - recip_mat[i, ]))^2)
+
+    ## closest donor k
+    k_use <- min(k, length(d)) # note; can't use more neighbours than donors available
+    nearest_idx <- order(d)[1:k_use] # indices of the k donors with the smallest distance
+
+    sample(donor_y[nearest_idx], size = 1) # randomly pick one of those k donors target values
+  })
+
+  x[[target]][miss_idx] <- imputed_values # add imputed values to dataframe
+  x
+}
+```
+
+## sequential hot deck from lowest missing rate
+```{r}
+dat_imp_seq <- dat_miss_bin
+
+## let 0% missing be in the predictor pool
+predictor_pool <- miss_df %>%
+  filter(pct_missing == 0) %>%
+  pull(variable)
+
+## variables for sequentially impute
+target_order <- miss_df %>%
+  filter(pct_missing > 0) %>%
+  arrange(pct_missing) %>%
+  pull(variable)
+
+predictor_pool
+target_order
+```
+
+```{r}
+## sequential hot deck
+imputation_log <- data.frame(
+  step = integer(),
+  target = character(),
+  pct_missing = numeric(),
+  n_predictors_used = integer(),
+  predictors_used = character()
+)
+
+for (j in seq_along(target_order)) {
+  target_j <- target_order[j]
+
+  ## predictors couldn't include themselves
+  current_predictors <- setdiff(predictor_pool, target_j)
+
+  dat_imp_seq <- hotdeck_one_var(
+    data = dat_imp_seq,
+    target = target_j,
+    predictors = current_predictors,
+    k = 5,
+    seed = 100 + j
+  )
+
+  ## adding target_j in the predictor pool after imputing
+  predictor_pool <- c(predictor_pool, target_j)
+
+  imputation_log <- bind_rows(
+    imputation_log,
+    data.frame(
+      step = j,
+      target = target_j,
+      pct_missing = miss_df$pct_missing[match(target_j, miss_df$variable)],
+      n_predictors_used = length(current_predictors),
+      predictors_used = paste(current_predictors, collapse = ", ")
+    )
+  )
+}
+
+imputation_log
+```
+
+## Check
+```{r}
+colSums(is.na(dat_imp_seq))
+sum(is.na(dat_imp_seq[pca_vars]))
+```
+
+## PCA
+```{r}
+## imputed data for PCA
+dat_pca_imp <- dat_imp_seq %>%
+  dplyr::select(all_of(pca_vars))
+
+dim(dat_pca_imp) # 905 x 17 (905 respondents x 17 attributes)
+
+# subtracts the mean from each variable so everything is centered at 0
+# divides by the standard deviation so all 17 variables are on the same scale
+pca_imp <- prcomp(dat_pca_imp, center = TRUE, scale. = TRUE)
+
+# Recall:
+# - Standard deviation = sqrt(eigenval_i)
+# - Proportion of Variance = eigenval_i / sum(all eigenval)
+summary(pca_imp)
+```
+# PCA with imputation
+
+```{r}
+round(pca_imp$rotation,2)
+```
+
+```{r}
+rot <- round(pca_imp$rotation, 2)[, 1:7]
+
+lapply(colnames(rot), function(pc) {
+  rot[abs(rot[, pc]) > 0.3, pc, drop = FALSE]
+})
+```
+
+```{r}
+# PC scores (each row = individual, each column = original data matrix dot.product eigenvector)
+# pca_imp$x is the 905 x 17 matrix of PC scores from the PCA
+# each row is a respondent, each column is a PC
+# wrap in as.data.frame() so we can use dplyr/tidyr on it
+
+# i.e. focus on row 1
+# [1,1] = respondent 1's actual values dot.product pc1 - this is the project of r1 onto pc1 axis
+# [1,2] = respodent 1's actual values dot.product pc2 - this is the projection of r2 onto pc2 axis
+pc_scores_imp <- as.data.frame(pca_imp$x)
+
+# add a respondent ID column — just row numbers 1 to 905
+# useful if you later want to join these scores back to the original data
+pc_scores_imp$id <- 1:nrow(pc_scores_imp)
+
+# We expect each respondent to have 17 scores + 1 id column
+dim(pc_scores_imp) == c(905, 18)
+
+# turn into long format
+library(tidyr)
+
+# pivot_longer reshapes from wide to long:
+# BEFORE: 905 rows x 18 columns (one column per PC)
+# AFTER:  905 x 17 = 15,385 rows, with two key columns:
+#           "PC"    — which PC this row refers to (e.g. "PC1", "PC2")
+#           "score" — that respondent's score on that PC
+# this is necessary because ggplot expects one row per observation to facet by PC
+pc_long <- pc_scores_imp %>%
+  pivot_longer(
+    cols = starts_with("PC"),
+    names_to = "PC",
+    values_to = "score"
+  )
+
+# histogram
+ggplot(pc_long %>% filter(PC %in% paste0("PC", 1:9)),
+       aes(x = score)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~PC, scales = "free") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of First 9 Principal Components (Imputed Data)",
+    x = "PC score",
+    y = "Count"
+  )
+
+ggplot(pc_long %>% filter(PC %in% paste0("PC", 10:17)),
+       aes(x = score)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~PC, scales = "free") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of 10-19 Principal Components (Imputed Data)",
+    x = "PC score",
+    y = "Count"
+  )
+```
+
+
+```{r, fig.width=8, fig.height=4.5}
+# estimated PC scores from each respondent
+pc_scores_ind <- as.data.frame(pca_imp$x[, 1:7])
+
+# connect with wave
+pc_scores_ind$Wave <- dat_bin$WAVE_NUM
+
+# mean PC score + wave size by wave
+wave_pc_mean <- pc_scores_ind %>%
+  filter(!is.na(Wave)) %>%
+  group_by(Wave) %>%
+  summarise(
+    wave_size = n(),
+    across(starts_with("PC"), mean, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# explained variance by individual PCA
+var_exp <- summary(pca_imp)$importance[2, ] * 100
+
+plot_df <- wave_pc_mean %>%
+  pivot_longer(
+    cols = c(PC2, PC3, PC4, PC5, PC6, PC7),
+    names_to = "PC_y",
+    values_to = "y_value"
+  ) %>%
+  mutate(
+    x_value = PC1,
+    Wave_num = as.numeric(Wave),
+    x_label = paste0("PC1 (", round(var_exp[1], 1), "%)"),
+    y_label = case_when(
+      PC_y == "PC2" ~ paste0("PC2 (", round(var_exp[2], 1), "%)"),
+      PC_y == "PC3" ~ paste0("PC3 (", round(var_exp[3], 1), "%)"),
+      PC_y == "PC4" ~ paste0("PC4 (", round(var_exp[4], 1), "%)"),
+      PC_y == "PC5" ~ paste0("PC5 (", round(var_exp[5], 1), "%)"),
+      PC_y == "PC6" ~ paste0("PC6 (", round(var_exp[6], 1), "%)"),
+      PC_y == "PC7" ~ paste0("PC7 (", round(var_exp[7], 1), "%)")
+    ),
+    panel = paste0(x_label, " vs ", y_label)
+  )
+
+# weighted average point for each subplot
+avg_df <- plot_df %>%
+  group_by(panel) %>%
+  summarise(
+    x_avg = weighted.mean(x_value, wave_size, na.rm = TRUE),
+    y_avg = weighted.mean(y_value, wave_size, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+wave_breaks <- c(0, 5, 10, 15)
+
+p1 <- ggplot(plot_df, aes(
+  x = x_value,
+  y = y_value,
+  color = Wave_num,
+  alpha = Wave_num,
+  size = wave_size
+)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey60") +
+
+  geom_point() +
+
+  # average black dot
+  geom_point(
+    data = avg_df,
+    aes(x = x_avg, y = y_avg),
+    inherit.aes = FALSE,
+    color = "black",
+    size = 4
+  ) +
+
+  geom_text(
+    data = plot_df %>% distinct(panel, x_label),
+    aes(x = 0, y = -1.8, label = x_label),
+    inherit.aes = FALSE,
+    size = 3.5
+  ) +
+
+  geom_text(
+    data = plot_df %>% distinct(panel, y_label),
+    aes(x = -1.8, y = 0, label = y_label),
+    inherit.aes = FALSE,
+    angle = 90,
+    size = 3.5
+  ) +
+
+  facet_wrap(~panel, ncol = 3) +
+
+  scale_color_gradient(
+    low = "#8B0000",
+    high = "#FFC0CB",
+    breaks = wave_breaks,
+    labels = wave_breaks,
+    name = "Wave",
+    guide = guide_colorbar(reverse = TRUE)
+  ) +
+
+  scale_alpha(range = c(1, 0.4), guide = "none") +
+
+  scale_size_continuous(
+    name = "Wave size",
+    range = c(2.5, 6)
+  ) +
+
+  coord_cartesian(
+    xlim = c(-2, 2),
+    ylim = c(-2, 2)
+  ) +
+
+  labs(
+    title = "Wave-level Mean PCA Scores (Darker = earlier waves)"
+  ) +
+
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),
+    strip.text = element_blank()
+  )
+p1
+ggsave("path2017_spca.png", plot = p1, width = 8, height = 6, dpi = 300)
+```
+
+## Logistic PCA
+
+- Logistic PCA respects binary data by modeling it through a logistic (Bernoulli) likelihood instead of assuming normality.
+```{r}
+## Logistic PCA
+library(logisticPCA)
+
+# Prepare the data — same variables as before but two extra steps:
+dat_lpca_imp <- dat_imp_seq %>%
+  dplyr::select(all_of(pca_vars)) %>%
+  # logisticPCA requires strictly numeric input, so force all columns to numeric
+  # (they may currently be integer or factor)
+  mutate(across(everything(), as.numeric))
+
+# logisticPCA requires a matrix not a data frame
+X_lpca <- as.matrix(dat_lpca_imp)
+```
+
+### Choose an optimal value of `m`
+```{r}
+cv_fit <- cv.lpca(X_lpca, ks =length(pca_vars), ms = 1:10)
+plot(cv_fit)
+```
+### 508
+```{r}
+cv_fit <- cv.lpca(X_lpca, ks = length(pca_vars), ms = 1:10)
+
+# one-row frame so the reference line draws once (and gets one legend key)
+opt_m <- data.frame(xintercept = 3)
+
+p <- plot(cv_fit) +
+
+  # --- NEW: dashed vertical line at m = 3, shown in legend as "Optimal m" ---
+  geom_vline(
+    data = opt_m,
+    aes(xintercept = xintercept, linetype = "Optimal m"),
+    colour = "black", linewidth = 0.7, inherit.aes = FALSE
+  ) +
+  scale_linetype_manual(name = NULL, values = c("Optimal m" = "dashed")) +
+
+  # --- axis + legend titles ---
+  labs(
+    x      = "Tuning parameter m",
+    y      = "Log-likelihood",
+    colour = "Number of PCs"
+  ) +
+
+  # --- 508: recolour the data line to a high-contrast, colorblind-safe blue ---
+  scale_colour_manual(
+    values = "#0072B2",
+    labels = paste0(length(pca_vars), " PCs")
+  ) +
+
+  theme_bw() +
+  theme(
+    axis.title   = element_text(size = 16),
+    axis.text    = element_text(size = 13, colour = "black"),
+    legend.title = element_text(size = 14),
+    legend.text  = element_text(size = 13)
+  )
+p
+ggsave("path2017_cv_FINAL.png", plot = p, width = 8, height = 5, dpi = 300)
+
+```
+
+```{r}
+lpca_imp <- logisticPCA(
+  X_lpca,
+  k = length(pca_vars), # number of PCs to extract, set to 17 (all variables)
+  m = 3 
+)
+
+# Select only the score columns (those starting with "V") from the imputed LPCA scores data frame
+lpca_scores_imp <- as.data.frame(lpca_imp$PCs)
+
+lpca_scores_only <- lpca_scores_imp %>%
+  dplyr::select(starts_with("V"))
+
+# Compute the standard deviation of each score column
+lpca_sd <- apply(lpca_scores_only, 2, sd)
+# Square the standard deviations to get the variance of each component
+lpca_var <- lpca_sd^2
+# Compute each component's proportion of total variance
+lpca_prop_var <- lpca_var / sum(lpca_var)
+
+# reorder everything by descending variance before computing cumulative sum
+var_order <- order(lpca_prop_var, decreasing = TRUE)
+lpca_sd       <- lpca_sd[var_order]
+lpca_var      <- lpca_var[var_order]
+lpca_prop_var <- lpca_prop_var[var_order]
+
+# cumulative sum is now computed on the sorted proportions
+lpca_cum_var <- cumsum(lpca_prop_var)
+
+# reorder the score columns to match
+lpca_scores_only <- lpca_scores_only[, var_order]
+lpca_scores_imp  <- lpca_scores_imp[, var_order]
+
+lpca_summary <- rbind(
+  `Standard deviation`    = lpca_sd,
+  `Proportion of Variance` = lpca_prop_var,
+  `Cumulative Proportion`  = lpca_cum_var
+)
+round(lpca_summary, 5)
+```
+```{r}
+as.data.frame(lpca_imp$U) %>%
+  `rownames<-`(pca_vars)  
+```
+
+```{r}
+# TODO - relable in SORTED ORDER
+## Logistic PCA scores + histogram + plot by wave
+
+## PC scores - rename to match convention used for regular PCA
+colnames(lpca_scores_imp) <- gsub("^V", "PC", colnames(lpca_scores_imp))
+
+# Add respondent ID
+lpca_scores_imp$id <- 1:nrow(lpca_scores_imp)
+
+## Histogram
+# reshape from wide to long - same logic as before with regular PCA scores
+# BEFORE: 905 rows x k columns (one column per PC)
+# AFTER:  905 x k rows, with "PC" identifying which component and "score" the value
+lpca_long <- lpca_scores_imp %>%
+  pivot_longer(
+    cols = starts_with("PC"),
+    names_to = "PC",
+    values_to = "score"
+  )
+# plot histograms for the first 7 PCs only
+# same diagnostic purpose as before — check that score distributions
+# look reasonable with no extreme outliers or unexpected multimodality
+ggplot(lpca_long %>% filter(PC %in% paste0("PC", 1:7)),
+       aes(x = score)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~PC, scales = "free") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of First 7 Logistic Principal Components",
+    x = "Logistic PC score",
+    y = "Count"
+  )
+```
+
+```{r}
+# prcomp(scale. = TRUE) ensures that regular PCA scores are standardized - no equivalent option for logisticPCA
+# Diagnostic step — check the raw score distributions across PCs
+# list(min, max, mean, sd) computes all four statistics for every PC column
+# if logistic PCA scores are on wildly different scales you'll see it here
+# e.g. PC1 ranging from -10 to 10 while PC3 ranges from -0.5 to 0.5
+lpca_scores_imp %>%
+  summarise(across(starts_with("PC"), list(
+    min = min,
+    max = max,
+    mean = mean,
+    sd = sd
+  )))
+
+# Diagnostic step — check the raw score distributions across PCs
+# list(min, max, mean, sd) computes all four statistics for every PC column
+# if logistic PCA scores are on wildly different scales you'll see it here
+# e.g. PC1 ranging from -10 to 10 while PC3 ranges from -0.5 to 0.5
+lpca_scores_scaled <- lpca_scores_imp %>%
+  mutate(across(starts_with("PC"), ~ as.numeric(scale(.x))))
+
+# head(lpca_scores_scaled)
+lpca_scores_scaled %>%
+  summarise(across(starts_with("PC"), list(
+    min = min,
+    max = max,
+    mean = mean,
+    sd = sd
+  )))
+```
+
+```{r}
+for (v in paste0("V", 1:7)) {
+  result <- as.data.frame(lpca_imp$U) %>%
+    `rownames<-`(pca_vars) %>%
+    filter(abs(.data[[v]]) > 0.3) %>%
+    select(all_of(v)) %>%
+    mutate(V = round(.data[[v]], 2))
+  
+  print("-----------------------------------")
+  print(paste("Component:", v))
+  print(result)
+}
+```
+
+## Logistic PCA plot (accounting for size of wave)
+```{r}
+# Use scaled logistic PC scores for visualization
+# Select only the first 7 PCs (by variance order established earlier)
+pc_scores_ind_lpca <- lpca_scores_scaled %>%
+  dplyr::select(1:7)
+
+# Tag each respondent with their wave
+pc_scores_ind_lpca$Wave <- dat_bin$WAVE_NUM
+
+# Collapse to wave-level means — one row per wave, one column per PC
+wave_lpca_mean <- pc_scores_ind_lpca %>%
+  group_by(Wave) %>%
+  summarise(
+    wave_size = n(),
+    across(starts_with("PC"), mean, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Recompute variance explained from unscaled scores using the reordered columns
+# (scaling changes the SDs to 1, so we need the original scores for this)
+lpca_scores_only <- lpca_scores_imp %>%
+  dplyr::select(starts_with("PC"))
+lpca_sd <- apply(lpca_scores_only, 2, sd)
+lpca_var_exp <- (lpca_sd^2 / sum(lpca_sd^2)) * 100
+
+# PC2 has the highest variance explained so it goes on the x-axis
+# Plot PC2 vs each of PC1, PC3, PC4, PC5, PC6, PC7 — one panel each
+# pivot_longer creates one row per wave per panel
+plot_df_lpca <- wave_lpca_mean %>%
+  pivot_longer(
+    cols = c(PC1, PC3, PC4:PC7),      # these are the y-axis PCs; PC2 is the x-axis
+    names_to = "PC_y",
+    values_to = "y_value"
+  ) %>%
+  mutate(
+    x_value = PC2,               # x-axis is always PC2 (highest variance component)
+    Wave_num = as.numeric(Wave),
+    panel = PC_y,                # panel identifier for facet_wrap
+    # x-axis label: PC2's variance explained (same across all panels)
+    x_label = paste0("PC2 (", round(lpca_var_exp["PC2"], 1), "%)"),
+    # y-axis label varies by panel
+    y_label = case_when(
+      PC_y == "PC1" ~ paste0("PC1 (", round(lpca_var_exp["PC1"], 1), "%)"),
+      PC_y == "PC3" ~ paste0("PC3 (", round(lpca_var_exp["PC3"], 1), "%)"),
+      PC_y == "PC4" ~ paste0("PC4 (", round(lpca_var_exp["PC4"], 1), "%)"),
+      PC_y == "PC5" ~ paste0("PC5 (", round(lpca_var_exp["PC5"], 1), "%)"),
+      PC_y == "PC6" ~ paste0("PC6 (", round(lpca_var_exp["PC6"], 1), "%)"),
+      PC_y == "PC7" ~ paste0("PC7 (", round(lpca_var_exp["PC7"], 1), "%)")
+    ),
+    panel = paste0(x_label, " vs ", y_label)
+  )
+
+plot_df_lpca <- plot_df_lpca %>%
+  mutate(PC_y = factor(PC_y, levels = c("PC1", "PC3", "PC4", "PC5", "PC6", "PC7")),
+         panel = factor(panel, levels = unique(panel[order(PC_y)])))
+
+# weighted average point for each subplot
+avg_df <- plot_df_lpca %>%
+  group_by(panel) %>%
+  summarise(
+    x_avg = weighted.mean(x_value, wave_size, na.rm = TRUE),
+    y_avg = weighted.mean(y_value, wave_size, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+wave_breaks <- c(0, 5, 10, 15)
+
+p2 <- ggplot(plot_df_lpca, aes(
+  x = x_value,
+  y = y_value,
+  color = Wave_num,      
+  alpha = Wave_num,
+  size = wave_size
+)) +
+  # reference lines at origin to anchor the PC space
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey60") +
+
+  # one dot per wave per panel
+  geom_point() +
+
+  # average black dot
+  geom_point(
+    data = avg_df,
+    aes(x = x_avg, y = y_avg),
+    inherit.aes = FALSE,
+    color = "black",
+    size = 4
+  ) +
+  
+  # custom x-axis label (PC2) placed near bottom centre of each panel
+  geom_text(
+    data = plot_df_lpca %>% distinct(panel, x_label),
+    aes(x = 0, y = -1.8, label = x_label),
+    inherit.aes = FALSE,
+    size = 3.5
+  ) +
+
+  # custom y-axis label rotated 90 degrees, placed near left of each panel
+  geom_text(
+    data = plot_df_lpca %>% distinct(panel, y_label),
+    aes(x = -1.8, y = 0, label = y_label),
+    inherit.aes = FALSE,
+    angle = 90,
+    size = 3.5
+  ) +
+
+  # one panel per y-axis PC, 3 columns
+  facet_wrap(~panel, ncol = 3) +
+
+  # dark red = early waves, pink = later waves
+  scale_color_gradient(
+    low = "#8B0000",
+    high = "#FFC0CB",
+    breaks = wave_breaks,
+    labels = wave_breaks,
+    name = "Wave",
+    guide = guide_colorbar(reverse = TRUE)
+  ) +
+
+  # alpha fades later waves but needs no legend entry
+  scale_alpha(range = c(1, 0.4), guide = "none") +
+  
+  scale_size_continuous(
+    name = "Wave size",
+    range = c(2.5, 6)
+  ) +
+
+  # fix all panels to same axis limits for comparability
+  coord_fixed(
+    xlim = c(-2, 2),
+    ylim = c(-2, 2)
+  ) +
+
+  labs(
+    title = "Wave-level Mean Logistic PCA Scores (Darker = earlier waves)"
+  ) +
+
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),   # suppressed — geom_text labels serve this role
+    strip.text = element_blank()    # panel headers removed — y_label identifies each panel
+  )
+p2
+ggsave("path2017_lpca.png", plot = p2)
+```
+
+```{r}
+sort(pca_vars)
+```
+
+```{r}
+write.csv(lpca_scores_scaled, "lpca_scores_scaled_PATH2017.csv")
+write.csv(lpca_scores_imp, "lpca_scores_imp_PATH2017.csv")
+write.csv(dat_bin, "dat_bin_PATH2017.csv")
+```
