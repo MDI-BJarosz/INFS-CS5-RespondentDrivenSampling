@@ -5,7 +5,7 @@ Data Availability Statement: Data used in the analyses are partially available t
 - HAWK: Lee, S. (2025). Health and Well-being of Koreans. Ann Arbor, MI: Inter-university Consortium for Political and Social Research [distributor], 2025-11-17. https://doi.org/10.3886/E232822V2
 
 The original code can be found in
-1. O:\PATH\Analysis\Joy Wu\RDS effectiveness
+1. ...\RDS effectiveness
 
 PCA (PATH 2017)-FINAL.Rmd
     Overview: Generates 
@@ -26,7 +26,7 @@ make_charts_FINAL.Rmd
     Overview: Generates 
         - Figure A.5.7 (path2017_lpca_FINAL.png), A.5.8 (path2022_lpca_FINAL.png), A.5.9 (hawk_lpca_FINAL.png)
 
-2. O:\Korean Health\Analysis\SL\NCSES
+2. ...\Korean Health\Analysis\SL\NCSES
 ACS and HAWK Benchmarking.Rmd 
 	- Figure A.5.4 (Figure_Seeds_NCSES.jpg)
 HAWK Contact.Rmd
